@@ -8,16 +8,25 @@ authors = [
 ]
 dependencies = [
     "absl-py>=2.1.0",
-    "rlax==0.1.2",
-    "flax>=0.7.4",
-    "optax>=0.2.2",
-    "wandb>=0.17.1",
-    "bsuite>=0.3.5",
-    "scipy==1.8.0",
-    "flashbax>=0.1.2",
+    #    "rlax==0.1.2",
+    #    "flax>=0.7.4",
+    #    "optax>=0.2.2",
+    #    "wandb>=0.17.1",
+    #    "bsuite>=0.3.5",
+    #    "scipy==1.8.0",
+    #    "flashbax>=0.1.2",
+    #    "lxm3==0.4.2",
+    #    "gymnax>=0.0.8",
+    #    "jax[cuda12_pip]>=0.4.18",
+    "jax>=0.5.0",
     "lxm3==0.4.2",
+    "flax>=0.10.2",
+    "optax>=0.2.4",
+    "wandb>=0.19.4",
+    "flashbax>=0.1.2",
     "gymnax>=0.0.8",
-    "jax[cuda12_pip]>=0.4.18",
+    "bsuite>=0.3.5",
+    "distrax>=0.1.5",
 ]
 requires-python = "==3.10.*"
 readme = "README.md"
@@ -33,13 +42,13 @@ build-backend = "pdm.backend"
  verify_ssl = true
  type = "find_links"
 
-                                           [tool.pdm.scripts]
+                                                    [tool.pdm.scripts]
 test.cmd = "pytest -n auto --maxprocesses 8 --dist loadfile"
 # test.env = { JAX_PLATFORM_NAME = "cpu", JAX_DISABLE_MOST_OPTIMIZATIONS = "1" }
 lint.shell = "ruff . && black --check ."
 fmt.shell = "ruff --fix . && black ."
 
-                                           [tool.pdm.dev-dependencies]
+                                                    [tool.pdm.dev-dependencies]
 dev = [
     "lxm3>=0.4.0",
     "ruff>=0.1.11",

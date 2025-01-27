@@ -11,7 +11,7 @@ def get_DDPG_config():
     config.NUM_MINIBATCHES = 4
 
     config.BUFFER_SIZE = 10000#0  # 1e5  # TODO change back to full asap
-    config.BATCH_SIZE = 128
+    config.BATCH_SIZE = 32  # 128
     config.EPS_START = 1.0
     config.EPS_FINISH = 0.05
     config.EPS_DECAY = 0.1

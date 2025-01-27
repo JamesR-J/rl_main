@@ -8,7 +8,7 @@ import optax
 from flax.training.train_state import TrainState
 from project_name.utils import MemoryState
 from project_name.agents import AgentBase
-from project_name.agents.PPO import get_PPO_config, ActorCritic
+from project_name.agents.PPO import get_PPO_config, DiscreteActorCritic, ContinuousActorCritic
 
 
 class PPOAgent(AgentBase):
@@ -22,16 +22,16 @@ class PPOAgent(AgentBase):
         self.agent_config = get_PPO_config()
         self.env = env
         self.env_params = env_params
-        self.network = ActorCritic(env.action_space().n, config=config)
+
+        if self.config.DISCRETE:
+            self.network = DiscreteActorCritic(env.action_space().n, config=config)
+        else:
+            self.network = ContinuousActorCritic(env.action_space().shape, config=config)
 
         if self.config.CNN:
-            init_x = ((jnp.zeros((1, config.NUM_ENVS, *env.observation_space(env_params).shape))),
-                      jnp.zeros((1, config.NUM_ENVS)),
-                      )
+            init_x = jnp.zeros((1, config.NUM_ENVS, *env.observation_space(env_params).shape))
         else:
-            init_x = (jnp.zeros((1, config.NUM_ENVS, utils.observation_space(env, env_params))),
-                      jnp.zeros((1, config.NUM_ENVS)),
-                      )
+            init_x = jnp.zeros((1, config.NUM_ENVS, utils.observation_space(env, env_params)))
 
         key, _key = jrandom.split(key)
         self.network_params = self.network.init(_key, init_x)
@@ -79,7 +79,12 @@ class PPOAgent(AgentBase):
         action = pi.sample(seed=_key)
         log_prob = pi.log_prob(action)
 
-        return mem_state, action, log_prob, value, key
+        mem_state.extras["values"] = value
+        mem_state.extras["log_probs"] = log_prob
+
+        mem_state = mem_state._replace(extras=mem_state.extras)
+
+        return mem_state, action, key
 
     @partial(jax.jit, static_argnums=(0,))
     def update(self, runner_state, agent, traj_batch, unused_2):

@@ -37,6 +37,7 @@ class EnvParams(environment.EnvParams):  # TODO sort this out at some point to m
     dt: float = 0.05
     x: np.ndarray = np.loadtxt('project_name/envs/x.dat')  # select space discretization of the target solution
     U_bf: np.ndarray = np.loadtxt('project_name/envs/u2.dat')  # select u1, u2 or u3 as target solution
+    MAX_TOTAL_REWARD: float = -16.5
 
 
 class KS_JAX(environment.Environment[EnvState, EnvParams]):
@@ -103,10 +104,11 @@ class KS_JAX(environment.Environment[EnvState, EnvParams]):
 
         reward = -jnp.linalg.norm(u_S - self.params.U_bf)
 
+        done = self.is_terminal(reward, params)  # TODO is this step okay idk?
+        reward = jax.lax.select(done, -100.0, reward)
+
         state = EnvState(u=u_S,
                          time=state.time + 1)
-
-        done = self.is_terminal(state, params)
 
         return lax.stop_gradient(self.get_obs(state)), lax.stop_gradient(state), reward, done, {"empty": None}
 
@@ -119,8 +121,8 @@ class KS_JAX(environment.Environment[EnvState, EnvParams]):
     def get_obs(self, state_S: EnvState, params=None, key=None):  # TODO this in case of partial observability
         return jnp.float32(state_S.u[5::self.x_S.shape[0] // self.s_dim])
 
-    def is_terminal(self, state: EnvState, params: EnvParams):
-        return False
+    def is_terminal(self, reward: jnp.ndarray, params: EnvParams):
+        return jax.lax.select(reward < self.params.MAX_TOTAL_REWARD, True, False)
 
     @property
     def name(self) -> str:

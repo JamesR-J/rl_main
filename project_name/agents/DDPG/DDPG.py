@@ -80,12 +80,12 @@ class DDPGAgent(AgentBase):
 
         self.eps_scheduler = optax.linear_schedule(init_value=self.agent_config.EPS_START,
                                                    end_value=self.agent_config.EPS_FINISH,
-                                                   transition_steps=self.agent_config.EPS_DECAY * config.NUM_UPDATES,
+                                                   transition_steps=self.agent_config.EPS_DECAY * config.NUM_EPISODES,
                                                    )
 
         def linear_schedule(count):  # TODO put this somewhere better
             frac = (1.0 - (count // (
-                    self.agent_config.NUM_MINIBATCHES * self.agent_config.UPDATE_EPOCHS)) / config.NUM_UPDATES)
+                    self.agent_config.NUM_MINIBATCHES * self.agent_config.UPDATE_EPOCHS)) / config.NUM_EPISODES)
             return self.agent_config.LR * frac
 
     def create_train_state(self):
@@ -98,10 +98,10 @@ class DDPGAgent(AgentBase):
                                                                target_params=self.actor_network_params,
                                                                tx=optax.adam(self.agent_config.LR_ACTOR, eps=1e-5))),
                 self.buffer.init(
-                    TransitionDDPG(done=jnp.zeros((self.config.NUM_ENVS), dtype=bool),
+                    TransitionDDPG(done=jnp.zeros((self.config.NUM_ENVS,), dtype=bool),
                                   action=jnp.zeros((self.config.NUM_ENVS,
                                                     self.env.action_space().shape), dtype=jnp.float64),
-                                  reward=jnp.zeros((self.config.NUM_ENVS)),
+                                  reward=jnp.zeros((self.config.NUM_ENVS,)),
                                   obs=jnp.zeros((self.config.NUM_ENVS,
                                                  self.utils.observation_space(self.env, self.env_params)),
                                                 dtype=jnp.float32),
@@ -117,23 +117,21 @@ class DDPGAgent(AgentBase):
         _, action = train_state.actor_state.apply_fn(train_state.actor_state.params, ac_in)  # TODO no rnn for now
         key, _key = jrandom.split(key)
         action += jnp.clip(jrandom.normal(_key, action.shape) * self.agent_config.ACTION_SCALE * self.agent_config.EXPLORATION_NOISE,
-                           -self.env.env_params.A_MAX, self.env.env_params.A_MAX)
+                           -self.env.params.A_MAX, self.env.params.A_MAX)
 
-        log_prob = jnp.zeros((*action.shape[:2],))
-        value = jnp.zeros((*action.shape[:2],))  # TODO sort these out, is this same dim number as num envs, do I need this or does it just go in mem state?
+        log_prob = jnp.zeros((action.shape[0],))
+        value = jnp.zeros((action.shape[0],))  # TODO sort these out, is this same dim number as num envs, do I need this or does it just go in mem state?
 
         return mem_state, action, log_prob, value, key
 
     @partial(jax.jit, static_argnums=(0,))
-    def update(self, runner_state, agent, traj_batch, unused_2):
-        traj_batch = jax.tree_map(lambda x: x[:, agent], traj_batch)
-
+    def update(self, runner_state, agent, traj_batch_LNX, unused_2):
         train_state, mem_state, env_state, ac_in, key = runner_state
 
-        mem_state = self.buffer.add(mem_state, TransitionDDPG(done=traj_batch.done,
-                                                                 action=traj_batch.action,
-                                                                 reward=traj_batch.reward,
-                                                                 obs=traj_batch.obs,
+        mem_state = self.buffer.add(mem_state, TransitionDDPG(done=traj_batch_LNX.done,
+                                                                 action=traj_batch_LNX.action,
+                                                                 reward=traj_batch_LNX.reward,
+                                                                 obs=traj_batch_LNX.obs,
                                                                  ))
 
         key, _key = jrandom.split(key)
@@ -148,7 +146,7 @@ class DDPGAgent(AgentBase):
             ndone = batch.experience.second.done
 
             _, action_pred = train_state.actor_state.apply_fn(actor_target_params, (nobs, ndone))
-            action_pred = jnp.clip(action_pred, -self.env.env_params.A_MAX, self.env.env_params.A_MAX)
+            action_pred = jnp.clip(action_pred, -self.env.params.A_MAX, self.env.params.A_MAX)
             _, target_val = train_state.critic_state.apply_fn(critic_target_params, None, ((nobs, action_pred), ndone))
 
             y_expected = reward + (1 - done) * self.agent_config.GAMMA * jnp.squeeze(target_val, axis=-1)  # TODO do I need stop gradient?
