@@ -1,0 +1,102 @@
+{
+    "os": "Linux-6.5.0-35-generic-x86_64-with-glibc2.35",
+    "python": "3.10.12",
+    "heartbeatAt": "2024-06-17T14:35:13.222581",
+    "startedAt": "2024-06-17T14:35:12.623657",
+    "docker": null,
+    "cuda": null,
+    "args": [],
+    "state": "running",
+    "program": "/home/jamesrj_desktop/PycharmProjects/prob_inf_marl/project_name/atari_game_run.py",
+    "codePathLocal": "atari_game_run.py",
+    "codePath": "atari_game_run.py",
+    "host": "jamesrj-System-Product-Name",
+    "username": "jamesrj_desktop",
+    "executable": "/home/jamesrj_desktop/PycharmProjects/prob_inf_marl/.venv/bin/python",
+    "cpu_count": 6,
+    "cpu_count_logical": 12,
+    "cpu_freq": {
+        "current": 4008.6733333333336,
+        "min": 800.0,
+        "max": 4400.0
+    },
+    "cpu_freq_per_core": [
+        {
+            "current": 4193.126,
+            "min": 800.0,
+            "max": 4400.0
+        },
+        {
+            "current": 4200.0,
+            "min": 800.0,
+            "max": 4400.0
+        },
+        {
+            "current": 4200.0,
+            "min": 800.0,
+            "max": 4400.0
+        },
+        {
+            "current": 4200.0,
+            "min": 800.0,
+            "max": 4400.0
+        },
+        {
+            "current": 4199.96,
+            "min": 800.0,
+            "max": 4400.0
+        },
+        {
+            "current": 4194.622,
+            "min": 800.0,
+            "max": 4400.0
+        },
+        {
+            "current": 4200.026,
+            "min": 800.0,
+            "max": 4400.0
+        },
+        {
+            "current": 4200.0,
+            "min": 800.0,
+            "max": 4400.0
+        },
+        {
+            "current": 4200.0,
+            "min": 800.0,
+            "max": 4400.0
+        },
+        {
+            "current": 4199.204,
+            "min": 800.0,
+            "max": 4400.0
+        },
+        {
+            "current": 4200.0,
+            "min": 800.0,
+            "max": 4400.0
+        },
+        {
+            "current": 4199.869,
+            "min": 800.0,
+            "max": 4400.0
+        }
+    ],
+    "disk": {
+        "/": {
+            "total": 915.3232879638672,
+            "used": 547.2542190551758
+        }
+    },
+    "gpu": "NVIDIA GeForce GTX 1080",
+    "gpu_count": 1,
+    "gpu_devices": [
+        {
+            "name": "NVIDIA GeForce GTX 1080",
+            "memory_total": 8589934592
+        }
+    ],
+    "memory": {
+        "total": 31.107524871826172
+    }
+}

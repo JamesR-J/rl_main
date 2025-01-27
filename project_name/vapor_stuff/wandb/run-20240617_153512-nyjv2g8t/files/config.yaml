@@ -1,0 +1,63 @@
+wandb_version: 1
+
+_fields:
+  desc: null
+  value:
+    SEED: 42
+    LR: 0.0003
+    GAMMA: 0.995
+    EPS: 1
+    TOTAL_TIMESTEPS: 100000000
+    NUM_ENVS: 1
+    TAU: 1.0
+    AUTOTUNE: false
+    TARGET_ENT_SCALE: 0.89
+    ALPHA: 0.2
+    BUFFER_SIZE: 100000
+    LEARNING_STARTS: 100
+    TRAIN_FREQ: 4
+    TARGET_NETWORK_FREQ: 1000
+    NSTEP: 1
+    BATCH_SIZE: 32
+    START_EPS: 1
+    END_EPS: 0.01
+    EPS_DECAY: 0.1
+    WANDB: online
+    WANDB_ENTITY: jamesr-j
+_locked:
+  desc: null
+  value: false
+_type_safe:
+  desc: null
+  value: true
+_convert_dict:
+  desc: null
+  value: true
+_wandb:
+  desc: null
+  value:
+    python_version: 3.10.12
+    cli_version: 0.17.1
+    framework: torch
+    is_jupyter_run: false
+    is_kaggle_kernel: false
+    start_time: 1718634912
+    t:
+      1:
+      - 1
+      - 12
+      - 45
+      - 55
+      2:
+      - 1
+      - 12
+      - 45
+      - 55
+      3:
+      - 16
+      - 23
+      4: 3.10.12
+      5: 0.17.1
+      8:
+      - 5
+      13: linux-x86_64
