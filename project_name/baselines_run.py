@@ -6,39 +6,17 @@ import wandb
 import gymnax
 from typing import NamedTuple
 import chex
-from .pax.envs.in_the_matrix import InTheMatrix, EnvParams as MatrixEnvParams
-from .pax.envs.iterated_matrix_game import IteratedMatrixGame, EnvParams
-from .pax.envs.coin_game import CoinGame
-from .pax.envs.coin_game import EnvParams as CoinGameParams
 from .agents import Agent, MultiAgent
 from .utils import Transition, EvalTransition, Utils_IMG, Utils_IMPITM, Utils_CG, Utils_DEEPSEA, Utils_KS
 import sys
 from .gymnax_jaxmarl_wrapper import GymnaxToJaxMARL
 from .deep_sea_wrapper import BsuiteToMARL
 import bsuite
-import jaxmarl
 from .envs.KS_JAX import KS_JAX
-
-
-"""
-M - Number of Meta Episodes
-E - Number of Episodes
-L - Episode Length
-G - Number of Agents
-N - Number of Envs
-O - Observation Dim
-A - Action Dim
-"""
 
 
 def run_train(config):
     if config.CNN:
-        payoff = jnp.array([[[3, 0], [5, 1]], [[3, 5], [0, 1]]])
-        env = InTheMatrix(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS,
-                          fixed_coin_location=False)
-        env_params = MatrixEnvParams(payoff_matrix=payoff, freeze_penalty=5)
-        utils = Utils_IMPITM(config)
-
         env = GymnaxToJaxMARL("DeepSea-bsuite", {"size": config.NUM_INNER_STEPS,
                                                  "sample_action_map": False})
         # check have updated the gymnax deep sea to the github change
@@ -49,17 +27,6 @@ def run_train(config):
         # env = BsuiteToMARL("deep_sea/1")
 
     else:
-        payoff = [[3, 3], [1, 4], [4, 1], [2, 2]]  # [[-1, -1], [-3, 0], [0, -3], [-2, -2]]  # payoff matrix for the IPD
-        env = IteratedMatrixGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS)
-        env_params = EnvParams(payoff_matrix=payoff)
-        utils = Utils_IMG(config)
-        # TODO the above game has issues with when it ends? causing loss spikes it seems
-
-        env = CoinGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS,
-                       cnn=False, egocentric=False)
-        env_params = CoinGameParams(payoff_matrix=[[1, 1, -2], [1, 1, -2]])
-        utils = Utils_CG(config)
-
         env = GymnaxToJaxMARL("KS_Equation", env=KS_JAX()) # TODO how to adjust default params for this step
         env_params = env.default_params
         utils = Utils_KS(config)
@@ -85,18 +52,13 @@ def run_train(config):
     def train():
         key = jax.random.PRNGKey(config.SEED)
 
-        if config.NUM_AGENTS == 1:
-            actor = Agent(env=env, env_params=env_params, config=config, utils=utils, key=key)
-        else:
-            actor = MultiAgent(env=env, env_params=env_params, config=config, utils=utils, key=key)
+        actor = Agent(env=env, env_params=env_params, config=config, utils=utils, key=key)
         train_state, mem_state = actor.initialise()
 
         reset_key = jrandom.split(key, config.NUM_ENVS)
         obs_NO, env_state = jax.vmap(env.reset, in_axes=(0, None), axis_name="batch_axis")(reset_key, env_params)
-        # TODO O may change above I guess
 
-        runner_state = (
-            train_state, mem_state, env_state, obs_NO, jnp.zeros((config.NUM_AGENTS, config.NUM_ENVS), dtype=bool), key)
+        runner_state = (train_state, mem_state, env_state, obs_NO, jnp.zeros(config.NUM_ENVS, dtype=bool), key)
 
         def _run_inner_update(update_runner_state, unused):
             runner_state, update_steps = update_runner_state

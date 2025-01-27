@@ -1,6 +1,6 @@
 
 IMAGE_TAG ?= cuda
-IMAGE_NAME ?= prob_inf_marl
+IMAGE_NAME ?= rl_main
 
 .PHONY: build-docker
 build-docker:

@@ -26,11 +26,16 @@ def get_config():
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
-    config.AGENT_TYPE = ["DDPG"]  # , "PPO_RNN"]  # ["MFOS", "ERSAC"]  # ["ROMMEO", "ROMMEO"]
-    # config.AGENT_TYPE = ["IDQN", "VLITE_MA"]  # , "PPO_RNN"]  # ["MFOS", "ERSAC"]  # ["ROMMEO", "ROMMEO"]
-    config.NUM_AGENTS = 1  # TODO is this really the best way?
-
-    config.CTDE = False
-    # config.CTDE = True
+    config.AGENT_TYPE = ["DDPG"]
 
     return config
+
+
+"""
+M - Number of Meta Episodes
+E - Number of Episodes
+L - Episode Length
+N - Number of Envs
+O - Observation Dim
+A - Action Dim
+"""
