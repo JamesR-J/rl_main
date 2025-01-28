@@ -66,7 +66,7 @@ class DiscreteActor(nn.Module):
 
 class ContinuousActor(nn.Module):
     action_dim: int
-    config: ConfigDict
+    agent_config: ConfigDict
 
     @nn.compact
     def __call__(self, x):
@@ -75,7 +75,7 @@ class ContinuousActor(nn.Module):
 
         action_mean = nn.Dense(self.action_dim, kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
         action_logstd = nn.tanh(nn.Dense(self.action_dim, kernel_init=kaiming_normal(), bias_init=constant(0.0))(x))
-        action_logstd = self.config.LOGSTD_MIN + 0.5 * (self.config.LOGSTD_MAX - self.config.LOGSTD_MIN) * (action_logstd + 1)
+        action_logstd = self.agent_config.LOGSTD_MIN + 0.5 * (self.agent_config.LOGSTD_MAX - self.agent_config.LOGSTD_MIN) * (action_logstd + 1)
 
         pi = distrax.Normal(action_mean, jnp.exp(action_logstd))
 

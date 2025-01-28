@@ -10,7 +10,7 @@ import jax.profiler
 def main(_):
     config = get_config()
 
-    # TODO remove action output of log prob and value, just store this in the mem state, sort out running log_prob and value through act and put in mem state instead, ensure PPO and all still work okay
+    # TODO can remove some memstate from those that do not need
 
     # TODO need to change update output to be for model info rather than env_state
 

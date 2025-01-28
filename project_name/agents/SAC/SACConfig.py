@@ -25,8 +25,8 @@ def get_SAC_config():
     config.ACTION_SCALE = 1.0
     config.EXPLORATION_NOISE = 0.1  # 0.2
 
-    config.LOGSTD_MIN = -5
-    config.LOGSTD_MAX = 2
+    config.LOGSTD_MIN = -1
+    config.LOGSTD_MAX = 1
     config.INIT_ALPHA = 0.1
     config.ALPHA_LR = 0.001
 

@@ -16,4 +16,7 @@ def get_ERSAC_config():
     config.NUM_ENSEMBLE = 10
     config.INIT_TAU = 0.02  # set in ersac paper
 
+    config.LOGSTD_MIN = -1
+    config.LOGSTD_MAX = 1
+
     return config

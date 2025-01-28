@@ -9,7 +9,7 @@ from flax.training.train_state import TrainState
 from project_name.utils import MemoryState
 from project_name.agents import AgentBase
 import chex
-from project_name.agents.ERSAC import get_ERSAC_config, ActorCritic, EnsembleNetwork
+from project_name.agents.ERSAC import get_ERSAC_config, DiscreteActorCritic, ContinuousActorCritic, EnsembleNetwork
 import numpy as np
 import distrax
 import flax
@@ -38,13 +38,19 @@ class ERSACAgent(AgentBase):
         self.agent_config = get_ERSAC_config()
         self.env = env
         self.env_params = env_params
-        self.network = ActorCritic(env.action_space().n, config=config, agent_config=self.agent_config)
-        self.rp_network = EnsembleNetwork(config=config, agent_config=self.agent_config)
+        self.utils = utils
+
+        if self.config.DISCRETE:
+            self.network = DiscreteActorCritic(env.action_space().n, config=config, agent_config=self.agent_config)
+            self.rp_network = EnsembleNetwork(env.action_space().n, config=config, agent_config=self.agent_config)
+        else:
+            self.network = ContinuousActorCritic(env.action_space().shape, config=config, agent_config=self.agent_config)
+            self.rp_network = EnsembleNetwork(env.action_space().shape, config=config, agent_config=self.agent_config)
 
         if self.config.CNN:
             self._init_x = jnp.zeros((1, config.NUM_ENVS, *env.observation_space(env_params).shape))
         else:
-            self._init_x = jnp.zeros((1, config.NUM_ENVS, utils.observation_space(env, env_params)))
+            self._init_x = jnp.zeros((1, config.NUM_ENVS, *utils.observation_space(env, env_params)))
 
         key, _key = jrandom.split(key)
         self.network_params = self.network.init(_key, self._init_x)
@@ -61,7 +67,7 @@ class ERSACAgent(AgentBase):
         def create_ensemble_state(key: chex.PRNGKey) -> TrainState:  # TODO is this the best place to put it all?
             key, _key = jrandom.split(key)
             rp_params = self.rp_network.init(_key, self._init_x,
-                                             jnp.zeros((1, self.config.NUM_ENVS, 1)))["params"],
+                                             jnp.zeros((1, self.config.NUM_ENVS, self.env.action_space().shape)))["params"],
             reward_state = TrainStateRP.create(apply_fn=self.rp_network.apply,
                                              params=rp_params[0]["_net"],  # TODO unsure why it needs a 0 index here?
                                              static_prior_params=rp_params[0]["_prior_net"],
@@ -77,16 +83,16 @@ class ERSACAgent(AgentBase):
                                 tau_opt_state=self.tau_optimiser.init(self.log_tau)),
                 MemoryState(hstate=jnp.zeros((self.config.NUM_ENVS, 1)),
                             extras={
-                                "values": jnp.zeros((self.config.NUM_ENVS, 1)),
-                                "log_probs": jnp.zeros((self.config.NUM_ENVS, 1)),
+                                "values": jnp.zeros(self.config.NUM_ENVS, dtype=jnp.float32),
+                                "log_probs": jnp.zeros((self.config.NUM_ENVS, self.env.action_space().shape), dtype=jnp.float32),
                             })
                 )
 
     @partial(jax.jit, static_argnums=(0,))
     def reset_memory(self, mem_state):
         mem_state = mem_state._replace(extras={
-            "values": jnp.zeros((self.config.NUM_ENVS, 1)),
-            "log_probs": jnp.zeros((self.config.NUM_ENVS, 1)),
+            "values": jnp.zeros(self.config.NUM_ENVS, dtype=jnp.float32),
+            "log_probs": jnp.zeros((self.config.NUM_ENVS, self.env.action_space().shape), dtype=jnp.float32),
         },
             hstate=jnp.zeros((self.config.NUM_ENVS, 1)),
         )
@@ -94,81 +100,83 @@ class ERSACAgent(AgentBase):
 
     @partial(jax.jit, static_argnums=(0,))
     def act(self, train_state: TrainStateERSAC, mem_state: Any, ac_in: Any, key: Any):  # TODO better implement checks
-        pi, value, action_logits = train_state.ac_state.apply_fn(train_state.ac_state.params, ac_in[0])
+        pi, value_N, action_logits_NA = train_state.ac_state.apply_fn(train_state.ac_state.params, ac_in[0])
         key, _key = jrandom.split(key)
-        action = pi.sample(seed=_key)
-        log_prob = pi.log_prob(action)
+        action_NA = pi.sample(seed=_key)
+        log_prob_NA = pi.log_prob(action_NA)
+
+        mem_state.extras["values"] = value_N
+        mem_state.extras["log_probs"] = log_prob_NA
 
         # action = jnp.ones_like(action)  # TODO for testing randomized actions
 
-        return mem_state, action, log_prob, value, key
+        return mem_state, action_NA, key
 
     @partial(jax.jit, static_argnums=(0,))
-    def _get_reward_noise(self, ens_state: TrainStateRP, obs: chex.Array, actions: chex.Array, key) -> chex.Array:
-        ensemble_obs = jnp.broadcast_to(obs, (self.agent_config.NUM_ENSEMBLE, *obs.shape))
-        ensemble_action = jnp.broadcast_to(actions, (self.agent_config.NUM_ENSEMBLE, *actions.shape))
+    def _get_reward_noise(self, ens_state: TrainStateRP, obs_LNO: chex.Array, actions_LNA: chex.Array, key) -> chex.Array:
+        ensemble_obs_ULNO = jnp.broadcast_to(obs_LNO, (self.agent_config.NUM_ENSEMBLE, *obs_LNO.shape))
+        ensemble_action_ULNA = jnp.broadcast_to(actions_LNA, (self.agent_config.NUM_ENSEMBLE, *actions_LNA.shape))
 
-        def single_reward_noise(ens_state: TrainStateRP, obs: chex.Array, action: chex.Array) -> chex.Array:
+        def single_reward_noise(ens_state: TrainStateRP, obs_LNO: chex.Array, action_LNA: chex.Array) -> chex.Array:
             rew_pred = ens_state.apply_fn({"params": {"_net": ens_state.params,
                                                       "_prior_net": ens_state.static_prior_params}},
-                                          obs, jnp.expand_dims(action, axis=-1))
+                                          obs_LNO, action_LNA)  # TODO needs a 1 if only 1 dimensional action
             return rew_pred
 
-        ensembled_reward = jax.vmap(single_reward_noise)(ens_state,
-                                                         ensemble_obs,
-                                                         ensemble_action)
+        ensembled_reward_ULN1 = jax.vmap(single_reward_noise)(ens_state,
+                                                         ensemble_obs_ULNO,
+                                                         ensemble_action_ULNA)
 
-        ensembled_reward = self.agent_config.UNCERTAINTY_SCALE * jnp.var(ensembled_reward, axis=0)
+        ensembled_reward_LN1 = self.agent_config.UNCERTAINTY_SCALE * jnp.var(ensembled_reward_ULN1, axis=0)
 
-        return ensembled_reward
+        return ensembled_reward_LN1
 
     @partial(jax.jit, static_argnums=(0,))
-    def update(self, runner_state, agent, traj_batch):
-        traj_batch = jax.tree_map(lambda x: x[:, agent], traj_batch)
+    def update(self, runner_state, agent, traj_batch_LNZ, unused_2):
         train_state, mem_state, env_state, ac_in, key = runner_state
 
         # key, _key = jrandom.split(key)
         # mask = jrandom.binomial(_key, 1, self._mask_prob, self._num_ensemble)  # TODO version of jax has no binomial?
-        mask = np.random.binomial(1, self.agent_config.MASK_PROB, self.agent_config.NUM_ENSEMBLE)
+        mask_U = np.random.binomial(1, self.agent_config.MASK_PROB, self.agent_config.NUM_ENSEMBLE)
         # TODO add noise generation
 
-        obs = jnp.concatenate((traj_batch.obs, jnp.zeros((1, *traj_batch.obs.shape[1:]))), axis=0)
+        obs_LP1NO = jnp.concatenate((traj_batch_LNZ.obs, jnp.zeros((1, *traj_batch_LNZ.obs.shape[1:]))), axis=0)
         # above is for the on policy version
 
         # check_obs = obs[:, 3]
         # end_obs = obs[-1, 3]
 
-        state_action_reward_noise = self._get_reward_noise(train_state.ens_state, traj_batch.obs, traj_batch.action, key)
+        state_action_reward_noise_LN1 = self._get_reward_noise(train_state.ens_state, traj_batch_LNZ.obs, traj_batch_LNZ.action, key)
 
-        def ac_loss(params, trajectory, obs, tau_params, state_action_reward_noise):
+        def ac_loss(params, trajectory_LNZ, obs_LP1NO, tau_params, state_action_reward_noise_LN1):
             tau = jnp.exp(tau_params)
 
-            _, values, logits = train_state.ac_state.apply_fn(params, obs)
-            policy_dist = distrax.Categorical(logits=logits[:-1])  # ensure this is the same as the network distro
-            log_prob = policy_dist.log_prob(trajectory.action)
+            _, values_LP1N, logitsLP1N2 = train_state.ac_state.apply_fn(params, obs_LP1NO)
+            policy_dist = distrax.Categorical(logits=logitsLP1N2[:-1])  # ensure this is the same as the network distro
+            log_prob_LN = policy_dist.log_prob(trajectory_LNZ.action)
 
             td_lambda = jax.vmap(rlax.td_lambda, in_axes=(1, 1, 1, 1, None), out_axes=1)
-            k_estimate = td_lambda(values[:-1],
-                                   trajectory.reward + (jnp.squeeze(state_action_reward_noise, axis=-1) / (2 * tau)),
-                                   (1 - trajectory.done) * self.agent_config.GAMMA,
-                                   values[1:],
+            k_estimate_LN = td_lambda(values_LP1N[:-1],
+                                   trajectory_LNZ.reward + (jnp.squeeze(state_action_reward_noise_LN1, axis=-1) / (2 * tau)),
+                                   (1 - trajectory_LNZ.done) * self.agent_config.GAMMA,
+                                   values_LP1N[1:],
                                    self.agent_config.TD_LAMBDA,
                                    )
 
-            value_loss = jnp.mean(jnp.square(values[:-1] - jax.lax.stop_gradient(k_estimate - tau * log_prob)))
+            value_loss = jnp.mean(jnp.square(values_LP1N[:-1] - jax.lax.stop_gradient(k_estimate_LN - tau * log_prob_LN)))
             # TODO is it right to use [1:] for these values etc or [:-1]?
 
             entropy = policy_dist.entropy()
 
-            policy_loss = -jnp.mean(log_prob * jax.lax.stop_gradient(k_estimate - values[:-1]) + tau * entropy)
+            policy_loss = -jnp.mean(log_prob_LN * jax.lax.stop_gradient(k_estimate_LN - values_LP1N[:-1]) + tau * entropy)
 
             return policy_loss + value_loss, entropy
 
         (pv_loss, entropy), grads = jax.value_and_grad(ac_loss, has_aux=True, argnums=0)(train_state.ac_state.params,
-                                                                                         traj_batch,
-                                                                                         obs,
+                                                                                         traj_batch_LNZ,
+                                                                                         obs_LP1NO,
                                                                                          train_state.log_tau,
-                                                                                         state_action_reward_noise)
+                                                                                         state_action_reward_noise_LN1)
         train_state = train_state._replace(ac_state=train_state.ac_state.apply_gradients(grads=grads))
 
         def tau_loss(tau_params, entropy, state_action_reward_noise):
@@ -180,7 +188,7 @@ class ERSACAgent(AgentBase):
 
         tau_loss_val, tau_grads = jax.value_and_grad(tau_loss, has_aux=False, argnums=0)(train_state.log_tau,
                                                                                          entropy,
-                                                                                         state_action_reward_noise)
+                                                                                         state_action_reward_noise_LN1)
         tau_updates, new_tau_opt_state = self.tau_optimiser.update(tau_grads, train_state.tau_opt_state)
         new_tau_params = optax.apply_updates(train_state.log_tau, tau_updates)
         train_state = train_state._replace(log_tau=new_tau_params, tau_opt_state=new_tau_opt_state)
@@ -204,11 +212,11 @@ class ERSACAgent(AgentBase):
 
             return ensemble_loss, ens_state, rew_pred
 
-        ensemble_obs = jnp.broadcast_to(traj_batch.obs, (self.agent_config.NUM_ENSEMBLE, *traj_batch.obs.shape))
-        ensemble_action = jnp.broadcast_to(traj_batch.action,
-                                           (self.agent_config.NUM_ENSEMBLE, *traj_batch.action.shape))
-        ensemble_reward = jnp.broadcast_to(traj_batch.reward,
-                                           (self.agent_config.NUM_ENSEMBLE, *traj_batch.reward.shape))
+        ensemble_obs = jnp.broadcast_to(traj_batch_LNZ.obs, (self.agent_config.NUM_ENSEMBLE, *traj_batch_LNZ.obs.shape))
+        ensemble_action = jnp.broadcast_to(traj_batch_LNZ.action,
+                                           (self.agent_config.NUM_ENSEMBLE, *traj_batch_LNZ.action.shape))
+        ensemble_reward = jnp.broadcast_to(traj_batch_LNZ.reward,
+                                           (self.agent_config.NUM_ENSEMBLE, *traj_batch_LNZ.reward.shape))
         ensemble_mask = np.random.binomial(1, self.agent_config.MASK_PROB, (ensemble_reward.shape))
 
         ensembled_loss, ens_state, rew_pred = jax.vmap(train_ensemble)(train_state.ens_state,
@@ -224,6 +232,7 @@ class ERSACAgent(AgentBase):
                 }
         for ensemble_id in range(self.agent_config.NUM_ENSEMBLE):
             info[f"Ensemble_{ensemble_id}_Reward_Pred_pv"] = rew_pred[ensemble_id, 6, 6]  # index random step and random batch
+            info[f"Ensemble_{ensemble_id}_Reward_Pred_pv"] = jnp.mean(rew_pred[ensemble_id])  # index random step and random batch
             info[f"Ensemble_{ensemble_id}_Loss"] = ensembled_loss[ensemble_id]
 
         return train_state, mem_state, env_state, info, key
