@@ -83,10 +83,9 @@ class ContinuousActorCritic(nn.Module):  # TODO change this and remove RNN
         critic = activation(critic)
         critic = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(critic)
 
-        actor_logstd = self.param("actor_logstd", nn.initializers.zeros,self.action_dim)
-        actor_logstd = jnp.broadcast_to(actor_logstd, actor_mean)
-        actor_std = jnp.exp(actor_logstd)
+        actor_logstd = self.param("actor_logstd", nn.initializers.zeros,(1, self.action_dim))
+        # TODO is the above okay?
 
-        pi = distrax.Normal(actor_mean, actor_std)  # TODO check if above works as well
+        pi = distrax.MultivariateNormalDiag(actor_mean, jnp.exp(actor_logstd))  # TODO check if above works as well
 
         return pi, jnp.squeeze(critic, axis=-1), actor_mean

@@ -4,7 +4,12 @@ import chex
 from functools import partial
 
 
-class AgentBase:
+class AgentBase:  # TODO sort this oot
+    # def __init__(self, env, env_params, key, config, utils):
+    #     self.config = config
+    #     self.env = env
+    #     self.env_params = env_params
+
     def create_train_state(self) -> Tuple[Any, Any]:
         raise NotImplementedError
 

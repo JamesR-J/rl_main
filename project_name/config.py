@@ -19,8 +19,8 @@ def get_config():
 
     # config.DEEP_SEA_MAP = 1  # 20
 
-    config.WANDB = "disabled"
-    # config.WANDB = "online"
+    # config.WANDB = "disabled"
+    config.WANDB = "online"
 
     config.DISABLE_JIT = False
     # config.DISABLE_JIT = True
@@ -28,18 +28,22 @@ def get_config():
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
     # config.AGENT_TYPE = "DDPG"
-    config.AGENT_TYPE = "PPO"
+    # config.AGENT_TYPE = "PPO"
+    config.AGENT_TYPE = "SAC"
 
     return config
 
 
 """
-MELNOA LoL
-M - Number of Meta Episodes
+BELNOAZ LoL
+B - Batch size, probably when using replay buffer
 E - Number of Episodes
 L - Episode Length/NUM_INNER_STEPS
 N - Number of Envs
 O - Observation Dim
 A - Action Dim
 Z - More dimensions when in a list
+
+further maybes
+M - Number of Meta Episodes
 """

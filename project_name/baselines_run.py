@@ -7,7 +7,7 @@ import gymnax
 from typing import NamedTuple
 import chex
 from .agents import Agent
-from .utils import Transition, EvalTransition, Utils_IMG, Utils_DEEPSEA, Utils_KS
+from .utils import Transition, EvalTransition, Utils_IMG, Utils_DEEPSEA, Utils_KS, Utils_Cartpole
 import sys
 from .deep_sea_wrapper import BsuiteToMARL
 import bsuite
@@ -27,9 +27,13 @@ def run_train(config):
         # env = BsuiteToMARL("deep_sea/1")
 
     else:
-        env = KS_JAX() # TODO how to adjust default params for this step
-        env_params = env.default_params
-        utils = Utils_KS(config)
+        if config.DISCRETE:
+            env, env_params = gymnax.make("CartPole-v1")
+            utils = Utils_Cartpole(config)
+        else:
+            env = KS_JAX() # TODO how to adjust default params for this step
+            env_params = env.default_params
+            utils = Utils_KS(config)
 
     # key = jax.random.PRNGKey(config.SEED)
     #

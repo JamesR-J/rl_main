@@ -5,29 +5,21 @@ import jax.random as jrandom
 from flax.training.train_state import TrainState
 from project_name.utils import MemoryState
 from project_name.agents import AgentBase
-from project_name.agents.DDPG import get_DDPG_config, ContinuousRNNQNetwork, ScannedRNN, DeterministicPolicy
+from project_name.agents.DDPG import get_DDPG_config, ContinuousQNetwork, ScannedRNN, DeterministicPolicy
 import flashbax as fbx
 import optax
 from functools import partial
 from typing import Any, NamedTuple
 import flax
-
-
-class TrainStateExt(TrainState):
-    target_params: flax.core.FrozenDict
+from flax.core.frozen_dict import freeze
+import rlax
+from project_name.utils import TransitionFlashbax, TrainStateExt
 
 
 class TrainStateDDPG(NamedTuple):
     critic_state: TrainStateExt
     actor_state: TrainStateExt
     n_updates: int = 0
-
-
-class TransitionDDPG(NamedTuple):
-    done: jnp.ndarray
-    action: jnp.ndarray
-    reward: jnp.ndarray
-    obs: jnp.ndarray
 
 
 class DDPGAgent(AgentBase):
@@ -42,33 +34,21 @@ class DDPGAgent(AgentBase):
         self.env = env
         self.env_params = env_params
         self.utils = utils
-        self.critic_network = ContinuousRNNQNetwork(config=config)  # TODO separate RNN and normal
+        self.critic_network = ContinuousQNetwork(config=config)  # TODO separate RNN and normal
         self.actor_network = DeterministicPolicy(env.action_space().shape, config=config,
                                                  action_scale=self.agent_config.ACTION_SCALE)
 
         key, _key = jrandom.split(key)
-        init_hstate = ScannedRNN.initialize_carry(config.NUM_ENVS, self.agent_config.GRU_HIDDEN_DIM)
 
-        if self.config.CNN:
-            init_x = ((jnp.zeros((1, config.NUM_ENVS, utils.observation_space(env, env_params))),
-                       (jnp.zeros((1, config.NUM_ENVS, env.action_space().shape)))),
-                      jnp.zeros((1, config.NUM_ENVS)),
-                      )
-        else:
-            init_x = ((jnp.zeros((1, config.NUM_ENVS, utils.observation_space(env, env_params))),
-                       (jnp.zeros((1, config.NUM_ENVS, env.action_space().shape)))),
+        init_x = (jnp.zeros((1, config.NUM_ENVS, *utils.observation_space(env, env_params))),
+                 (jnp.zeros((1, config.NUM_ENVS, env.action_space().shape))))
+
+        init_actor_x = (jnp.zeros((1, config.NUM_ENVS, *utils.observation_space(env, env_params))),
                       jnp.zeros((1, config.NUM_ENVS)),
                       )
 
-        init_actor_x = (jnp.zeros((1, config.NUM_ENVS, utils.observation_space(env, env_params))),
-                      jnp.zeros((1, config.NUM_ENVS)),
-                      )
-
-        self.critic_network_params = self.critic_network.init(_key, init_hstate, init_x)
+        self.critic_network_params = self.critic_network.init(_key, init_x[0], init_x[1])
         self.actor_network_params = self.actor_network.init(_key, init_actor_x)
-
-        self.init_hstate = ScannedRNN.initialize_carry(config.NUM_ENVS,
-                                                       self.agent_config.GRU_HIDDEN_DIM)  # TODO do we need both?
 
         self.agent_config.NUM_MINIBATCHES = min(self.config.NUM_ENVS, self.agent_config.NUM_MINIBATCHES)
 
@@ -98,12 +78,12 @@ class DDPGAgent(AgentBase):
                                                                target_params=self.actor_network_params,
                                                                tx=optax.adam(self.agent_config.LR_ACTOR, eps=1e-5))),
                 self.buffer.init(
-                    TransitionDDPG(done=jnp.zeros((self.config.NUM_ENVS,), dtype=bool),
+                    TransitionFlashbax(done=jnp.zeros((self.config.NUM_ENVS,), dtype=bool),
                                   action=jnp.zeros((self.config.NUM_ENVS,
                                                     self.env.action_space().shape), dtype=jnp.float64),
                                   reward=jnp.zeros((self.config.NUM_ENVS,)),
                                   obs=jnp.zeros((self.config.NUM_ENVS,
-                                                 self.utils.observation_space(self.env, self.env_params)),
+                                                 *self.utils.observation_space(self.env, self.env_params)),
                                                 dtype=jnp.float32),
                                   # TODO is it always an int for the obs?
                                   )))
@@ -119,19 +99,20 @@ class DDPGAgent(AgentBase):
         action += jnp.clip(jrandom.normal(_key, action.shape) * self.agent_config.ACTION_SCALE * self.agent_config.EXPLORATION_NOISE,
                            -self.env.params.A_MAX, self.env.params.A_MAX)
 
-        log_prob = jnp.zeros((action.shape[0],))
-        value = jnp.zeros((action.shape[0],))  # TODO sort these out, is this same dim number as num envs, do I need this or does it just go in mem state?
+        # action = rlax.add_ornstein_uhlenbeck_noise(_key, action, )
 
-        return mem_state, action, log_prob, value, key
+        return mem_state, action, key
+
+
 
     @partial(jax.jit, static_argnums=(0,))
-    def update(self, runner_state, agent, traj_batch_LNX, unused_2):
+    def update(self, runner_state, agent, traj_batch_LNZ, unused_2):
         train_state, mem_state, env_state, ac_in, key = runner_state
 
-        mem_state = self.buffer.add(mem_state, TransitionDDPG(done=traj_batch_LNX.done,
-                                                                 action=traj_batch_LNX.action,
-                                                                 reward=traj_batch_LNX.reward,
-                                                                 obs=traj_batch_LNX.obs,
+        mem_state = self.buffer.add(mem_state, TransitionFlashbax(done=traj_batch_LNZ.done,
+                                                                 action=traj_batch_LNZ.action,
+                                                                 reward=traj_batch_LNZ.reward,
+                                                                 obs=traj_batch_LNZ.obs,
                                                                  ))
 
         key, _key = jrandom.split(key)
@@ -147,11 +128,11 @@ class DDPGAgent(AgentBase):
 
             _, action_pred = train_state.actor_state.apply_fn(actor_target_params, (nobs, ndone))
             action_pred = jnp.clip(action_pred, -self.env.params.A_MAX, self.env.params.A_MAX)
-            _, target_val = train_state.critic_state.apply_fn(critic_target_params, None, ((nobs, action_pred), ndone))
+            target_val = train_state.critic_state.apply_fn(critic_target_params, nobs, action_pred)
 
             y_expected = reward + (1 - done) * self.agent_config.GAMMA * jnp.squeeze(target_val, axis=-1)  # TODO do I need stop gradient?
 
-            _, y_pred = train_state.critic_state.apply_fn(critic_params, None, ((obs, action), done))
+            y_pred = train_state.critic_state.apply_fn(critic_params, obs, action)
 
             loss_critic = optax.losses.huber_loss(jnp.squeeze(y_pred, axis=-1), y_expected) / 1.0  # same as smooth l1 loss ?
 
@@ -163,46 +144,61 @@ class DDPGAgent(AgentBase):
                                                                                       batch
                                                                                       )
 
-        train_state = train_state._replace(critic_state=train_state.critic_state.apply_gradients(grads=grads))
+        new_critic_state = train_state.critic_state.apply_gradients(grads=grads)
+        # train_state = train_state._replace(critic_state=train_state.critic_state.apply_gradients(grads=grads))
 
-        def actor_loss(critic_params, actor_params, batch):
+        def policy_loss(critic_params, actor_params, batch):
             obs = batch.experience.first.obs
             done = batch.experience.first.done
 
             _, action_pred = train_state.actor_state.apply_fn(actor_params, (obs, done))
 
-            _, q_val = train_state.critic_state.apply_fn(critic_params, None, ((obs, action_pred), done))
+            q_val = train_state.critic_state.apply_fn(critic_params, obs, action_pred)
 
             loss_actor = -jnp.mean(q_val)
 
-            return loss_actor
+            def critic_mean(critic_params, obs, dpg_a_t):
+                logits = train_state.critic_state.apply_fn(critic_params, obs, dpg_a_t)
 
-        actor_loss, grads = jax.value_and_grad(actor_loss, argnums=1, has_aux=False)(train_state.critic_state.params,
+                return jnp.mean(logits)
+
+            dpg_a_t = action_pred
+            dq_da = jax.vmap(jax.vmap(jax.grad(critic_mean, argnums=2, has_aux=False), in_axes=(None, 0, 0)), in_axes=(None, 0, 0))(critic_params, obs, dpg_a_t)
+            dqda_clipping = None  # can also be 1
+            rlax_loss = jax.vmap(jax.vmap(rlax.dpg_loss, in_axes=(0, 0, None)), in_axes=(0, 0, None))(dpg_a_t, dq_da, dqda_clipping)
+            rlax_loss = jnp.mean(rlax_loss)
+
+            return rlax_loss  # loss_actor
+
+        actor_loss, grads = jax.value_and_grad(policy_loss, argnums=1, has_aux=False)(new_critic_state.params,
                                                                                     train_state.actor_state.params,
                                                                                     batch
                                                                                     )
 
-        train_state = train_state._replace(actor_state=train_state.actor_state.apply_gradients(grads=grads))
+        new_actor_state = train_state.actor_state.apply_gradients(grads=grads)
+        # train_state = train_state._replace(actor_state=train_state.actor_state.apply_gradients(grads=grads))
 
         # update target network
         new_critic_state = jax.lax.cond(train_state.n_updates % self.agent_config.TARGET_UPDATE_INTERVAL == 0,
-                                   lambda critic_state: critic_state.replace(
-                                       target_params=optax.incremental_update(train_state.critic_state.params,
-                                                                                      train_state.critic_state.target_params,
-                                                                                      self.agent_config.TAU)),
-                                   lambda train_state: train_state, operand=train_state.critic_state)
+                                        lambda new_critic_state:
+                                        new_critic_state.replace(target_params=optax.incremental_update(new_critic_state.params,
+                                                                    new_critic_state.target_params,
+                                                                    self.agent_config.TAU)),
+                                        lambda new_critic_state: new_critic_state, operand=new_critic_state)
         new_actor_state = jax.lax.cond(train_state.n_updates % self.agent_config.TARGET_UPDATE_INTERVAL == 0,
-                                   lambda actor_state: actor_state.replace(
-                                       target_params=optax.incremental_update(train_state.actor_state.params,
-                                                                              train_state.actor_state.target_params,
-                                                                              self.agent_config.TAU)),
-                                   lambda train_state: train_state, operand=train_state.actor_state)
-        train_state = train_state._replace(critic_state=new_critic_state)
-        train_state = train_state._replace(actor_state=new_actor_state)
-        # TODO is the above okay? think needs reworking if possible
+                                        lambda new_actor_state:
+                                        new_actor_state.replace(target_params=optax.incremental_update(new_actor_state.params,
+                                                                    new_actor_state.target_params,
+                                                                    self.agent_config.TAU)),
+                                        lambda new_actor_state: new_actor_state, operand=new_actor_state)
+        # TODO above needs reworking if possible
 
-        info = {"value_loss": jnp.mean(critic_loss),  # TODO technically q loss?
-                "actor_loss": jnp.mean(actor_loss)
+        train_state = train_state._replace(critic_state=new_critic_state,
+                                           actor_state=new_actor_state,
+                                           n_updates=train_state.n_updates+1)
+
+        info = {"value_loss": jnp.mean(critic_loss),
+                "policy_loss": jnp.mean(actor_loss)
                 }
 
         return train_state, mem_state, env_state, info, key

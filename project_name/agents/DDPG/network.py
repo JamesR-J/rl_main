@@ -45,34 +45,28 @@ class CNNtoLinear(nn.Module):
         return flatten_layer
 
 
-class ContinuousRNNQNetwork(nn.Module):  # TODO change this and remove RNN
+class ContinuousQNetwork(nn.Module):  # TODO change this and remove RNN
     config: ConfigDict
     activation: str = "tanh"
     init_scale: float = 1.0
 
     @nn.compact
-    def __call__(self, hidden, x):
-        (obs, actions), dones = x
-
+    def __call__(self, obs, actions):
         # if self.config.CNN:  # TODO turned off CNN as well
         #     embedding = CNNtoLinear()(obs)
         # else:
         #     embedding = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(obs)
         #     embedding = nn.relu(embedding)
 
-        # rnn_in = (embedding, dones)  # TODO turned off rnn for now
-        # hidden, embedding = ScannedRNN()(hidden, rnn_in)
-        hidden = None
-
-        s1 = nn.swish(nn.Dense(256)(obs))
-        s2 = nn.swish(nn.Dense(128)(s1))
-        a1 = nn.swish(nn.Dense(128)(actions))
+        s1 = nn.swish(nn.Dense(256, kernel_init=nn.initializers.kaiming_uniform())(obs))
+        s2 = nn.swish(nn.Dense(128, kernel_init=nn.initializers.kaiming_uniform())(s1))
+        a1 = nn.swish(nn.Dense(128, kernel_init=nn.initializers.kaiming_uniform())(actions))
 
         new_x = jnp.concatenate((s2, a1), axis=-1)
-        new_x = nn.swish(nn.Dense(128)(new_x))
-        q_vals = nn.Dense(1)(new_x)
+        new_x = nn.swish(nn.Dense(128, kernel_init=nn.initializers.kaiming_uniform())(new_x))
+        q_vals = nn.Dense(1, kernel_init=nn.initializers.uniform(0.003))(new_x)
 
-        return hidden, q_vals
+        return q_vals
 
 
 class DeterministicPolicy(nn.Module):
@@ -95,11 +89,11 @@ class DeterministicPolicy(nn.Module):
         # hidden, embedding = ScannedRNN()(hidden, rnn_in)
         hidden = None
 
-        new_x = nn.relu(nn.Dense(256)(obs))  # TODO sort out INITs
-        new_x = nn.relu(nn.Dense(128)(new_x))
-        new_x = nn.relu(nn.Dense(64)(new_x))
+        new_x = nn.relu(nn.Dense(256, kernel_init=nn.initializers.kaiming_uniform())(obs))  # TODO sort out INITs
+        new_x = nn.relu(nn.Dense(128, kernel_init=nn.initializers.kaiming_uniform())(new_x))
+        new_x = nn.relu(nn.Dense(64, kernel_init=nn.initializers.kaiming_uniform())(new_x))
 
-        action = nn.tanh(nn.Dense(self.action_dim)(new_x))
+        action = nn.tanh(nn.Dense(self.action_dim, kernel_init=nn.initializers.uniform(0.003))(new_x))
 
         action = action * self.action_scale
 

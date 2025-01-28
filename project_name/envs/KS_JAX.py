@@ -141,7 +141,7 @@ class KS_JAX(environment.Environment[EnvState, EnvParams]):
     def observation_space(self, params: EnvParams) -> spaces.Box:
         """Observation space of the environment."""
         high = 10  # TODO unsure of actual size should check
-        return spaces.Box(-high, high, self.params.S_DIM, dtype=jnp.float32)
+        return spaces.Box(-high, high, (self.params.S_DIM,), dtype=jnp.float32)
 
     # def state_space(self, params: EnvParams) -> spaces.Dict:
     #     """State space of the environment."""

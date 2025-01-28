@@ -44,8 +44,6 @@ class Agent:
     @partial(jax.jit, static_argnums=(0,))
     def update(self, train_state: Any, mem_state: Any, env_state: Any, last_obs_batch: Any, last_done: Any, key: Any,
                trajectory_batch: Any):  # TODO add better chex
-        new_mem_state = jax.tree_map(lambda x: jnp.expand_dims(x, axis=1), trajectory_batch.mem_state)
-        trajectory_batch = trajectory_batch._replace(mem_state=new_mem_state)  # TODO check this is fine
         ac_in = (last_obs_batch, last_done)
         train_state = (train_state, mem_state, env_state, ac_in, key)
         train_state, mem_state, env_state, info, key = self.agent.update(train_state, 0, trajectory_batch, None)

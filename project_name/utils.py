@@ -28,6 +28,12 @@ class Transition(NamedTuple):
     info: jnp.ndarray
 
 
+class TransitionFlashbax(NamedTuple):
+    done: jnp.ndarray
+    action: jnp.ndarray
+    reward: jnp.ndarray
+    obs: jnp.ndarray
+
 class EvalTransition(NamedTuple):
     global_done: jnp.ndarray
     done: jnp.ndarray
@@ -108,27 +114,6 @@ class Utils_IMG:
         self.config = config
 
     @staticmethod
-    def batchify(x: dict, agent_list, num_agents, num_envs):
-        inter = jnp.stack([x[a] for a in agent_list])
-        return inter.reshape((num_agents, num_envs, -1))
-
-    @staticmethod
-    def batchify_obs(x: dict, agent_list, num_agents, num_envs):
-        inter = jnp.stack([x[a] for a in agent_list])
-        return inter.reshape((num_agents, num_envs, -1))
-
-    @staticmethod
-    def unbatchify(x: jnp.ndarray, agent_list, num_agents, num_devices):
-        x = x.reshape((num_agents, num_devices, -1))
-        return {i: x[i] for i in agent_list}
-
-    @staticmethod
-    def ac_in(obs, dones, agent):
-        return (obs[jnp.newaxis, agent, :],
-                dones[jnp.newaxis, agent],
-                )
-
-    @staticmethod
     def observation_space(env, env_params):
         return env.observation_space(env_params).n
 
@@ -137,24 +122,16 @@ class Utils_DEEPSEA(Utils_IMG):
     def __init__(self, config):
         super().__init__(config)
 
-    @staticmethod
-    def batchify_obs(x: dict, agent_list, num_agents, num_envs):
-        # obs = jnp.stack([x[a]["observation"] for a in agent_list]).reshape(
-        #     (num_agents, num_envs, *x[0]["observation"].shape[1:]))
-        # inv = jnp.stack([x[a]["inventory"] for a in agent_list]).reshape((num_agents, num_envs, -1))
-        # return (obs, inv)
-        inter = jnp.stack([x[a] for a in agent_list])
-        return inter.reshape((num_agents, num_envs, *inter.shape[2:]))
+    def visitation(self, env_state, traj_batch, final_obs):
+        return None  # ipditm_stats(env_state, traj_batch, self.config.NUM_ENVS)
 
     @staticmethod
-    def ac_in(obs, dones, agent):
-        # return ((obs[0][jnp.newaxis, agent, :],
-        #          obs[1][jnp.newaxis, agent, :]),
-        #         dones[jnp.newaxis, agent],
-        #         )
-        return (obs[jnp.newaxis, agent, :],
-                dones[jnp.newaxis, agent],
-                )
+    def observation_space(env, env_params):
+        return env.observation_space(env_params).shape
+
+class Utils_Cartpole(Utils_IMG):
+    def __init__(self, config):
+        super().__init__(config)
 
     def visitation(self, env_state, traj_batch, final_obs):
         return None  # ipditm_stats(env_state, traj_batch, self.config.NUM_ENVS)
@@ -166,15 +143,6 @@ class Utils_DEEPSEA(Utils_IMG):
 class Utils_KS(Utils_IMG):
     def __init__(self, config):
         super().__init__(config)
-
-    @staticmethod
-    def batchify_obs(x: dict, agent_list, num_agents, num_envs):
-        # obs = jnp.stack([x[a]["observation"] for a in agent_list]).reshape(
-        #     (num_agents, num_envs, *x[0]["observation"].shape[1:]))
-        # inv = jnp.stack([x[a]["inventory"] for a in agent_list]).reshape((num_agents, num_envs, -1))
-        # return (obs, inv)
-        inter = jnp.stack([x[a] for a in agent_list])
-        return inter.reshape((num_agents, num_envs, *inter.shape[2:]))
 
     @staticmethod
     def observation_space(env, env_params):

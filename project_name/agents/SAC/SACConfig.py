@@ -1,10 +1,9 @@
 from ml_collections import config_dict
 
 
-def get_DDPG_config():
+def get_SAC_config():
     config = config_dict.ConfigDict()
-    config.LR_CRITIC = 0.001
-    config.LR_ACTOR = 0.001
+    config.LR = 0.001
     config.EPS = 1
     config.GRU_HIDDEN_DIM = 16
     config.GAE_LAMBDA = 0.95
@@ -25,5 +24,10 @@ def get_DDPG_config():
 
     config.ACTION_SCALE = 1.0
     config.EXPLORATION_NOISE = 0.1  # 0.2
+
+    config.LOGSTD_MIN = -5
+    config.LOGSTD_MAX = 2
+    config.INIT_ALPHA = 0.1
+    config.ALPHA_LR = 0.001
 
     return config
