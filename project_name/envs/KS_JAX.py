@@ -8,7 +8,7 @@ from jax import lax
 from typing import Optional
 import jax
 
-jax.config.update("jax_enable_x64", True)  # TODO unsure if need or not but will check results
+jax.config.update("jax_enable_x64", False)  # TODO unsure if need or not but will check results
 
 
 """

@@ -12,6 +12,7 @@ import sys
 from .deep_sea_wrapper import BsuiteToMARL
 import bsuite
 from .envs.KS_JAX import KS_JAX
+from .envs.wrappers import LogWrapper, FlattenObservationWrapper
 
 
 def run_train(config):
@@ -29,10 +30,21 @@ def run_train(config):
     else:
         if config.DISCRETE:
             env, env_params = gymnax.make("CartPole-v1")
+            env = LogWrapper(env)
+            utils = Utils_Cartpole(config)
+
+            env, env_params = gymnax.make("Acrobot-v1")
+            env = LogWrapper(env)
+            utils = Utils_Cartpole(config)
+
+            env, env_params = gymnax.make("DeepSea-bsuite")
+            env = FlattenObservationWrapper(env)
+            env = LogWrapper(env)
             utils = Utils_Cartpole(config)
         else:
             env = KS_JAX() # TODO how to adjust default params for this step
             env_params = env.default_params
+            env = LogWrapper(env)  # TODO does this work with the env?
             utils = Utils_KS(config)
 
     # key = jax.random.PRNGKey(config.SEED)
@@ -97,13 +109,14 @@ def run_train(config):
 
             def callback(traj_batch, env_stats, agent_stats, update_steps):
                 metric_dict = {"Total Steps": update_steps * config.NUM_ENVS * config.NUM_INNER_STEPS,
-                               "Total_Episodes": update_steps* config.NUM_ENVS
-                    }
-                # TODO add some step count above, is it per episode or something else?
+                               "Total_Episodes": update_steps * config.NUM_ENVS,
+                               "avg_reward": traj_batch.reward.mean(),
+                               "returns": traj_batch.info["returned_episode_returns"].mean(),
+                               "avg_action": traj_batch.action.mean()}
+
+                print(traj_batch.info)
 
                 # shape is LN, so we are averaging over the num_envs and episode
-                metric_dict["reward"] = traj_batch.reward.mean()
-                metric_dict["avg_action"] = traj_batch.action.mean()
                 for item in agent_info:
                     metric_dict[f"{item}"] = agent_stats[item]
 

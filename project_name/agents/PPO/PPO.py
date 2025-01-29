@@ -77,7 +77,7 @@ class PPOAgent(AgentBase):
         pi, value, action_logits = train_state.apply_fn(train_state.params, ac_in[0])
         key, _key = jrandom.split(key)
         action = pi.sample(seed=_key)
-        action = jnp.clip(action, -self.env.params.A_MAX, self.env.params.A_MAX)
+        # action = jnp.clip(action, -self.env.params.A_MAX, self.env.params.A_MAX)  # TODO add for continuous somehow
         log_prob = pi.log_prob(action)
 
         mem_state.extras["values"] = value

@@ -23,7 +23,8 @@ def main(_):
     wandb.init(project="RL_BASE",
         entity=config.WANDB_ENTITY,
         config=config,
-        group="ks_tests",
+        # group="ks_tests",
+        group="discrete_tests",
         mode=config.WANDB
     )
 
