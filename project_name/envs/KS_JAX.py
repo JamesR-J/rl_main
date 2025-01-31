@@ -8,7 +8,7 @@ from jax import lax
 from typing import Optional
 import jax
 
-jax.config.update("jax_enable_x64", False)  # TODO unsure if need or not but will check results
+jax.config.update("jax_enable_x64", True)  # TODO unsure if need or not but will check results
 
 
 """
@@ -105,7 +105,9 @@ class KS_JAX(environment.Environment[EnvState, EnvParams]):
         reward = -jnp.linalg.norm(u_S - self.params.U_bf)
 
         done = self.is_terminal(reward, params)  # TODO is this step okay idk?
-        reward = jax.lax.select(done, -100.0, reward)
+        reward_scaler = 30.0
+        reward = jax.lax.select(done, -reward_scaler, reward) / reward_scaler
+        # reward = jax.lax.select(done, -100.0, reward)
 
         state = EnvState(u=u_S,
                          time=state.time + 1)
@@ -136,12 +138,12 @@ class KS_JAX(environment.Environment[EnvState, EnvParams]):
 
     def action_space(self, params: Optional[EnvParams] = None) -> spaces.Box:
         """Action space of the environment."""
-        return spaces.Box(-self.params.A_MAX, self.params.A_MAX, self.params.A_DIM, dtype=jnp.float64)  # TODO 64 or 32 precision?
+        return spaces.Box(-self.params.A_MAX, self.params.A_MAX, (self.params.A_DIM,), dtype=jnp.float64)
 
     def observation_space(self, params: EnvParams) -> spaces.Box:
         """Observation space of the environment."""
         high = 10  # TODO unsure of actual size should check
-        return spaces.Box(-high, high, (self.params.S_DIM,), dtype=jnp.float32)
+        return spaces.Box(-high, high, (self.params.S_DIM,), dtype=jnp.float64)
 
     # def state_space(self, params: EnvParams) -> spaces.Dict:
     #     """State space of the environment."""

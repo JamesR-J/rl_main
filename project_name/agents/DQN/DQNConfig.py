@@ -1,7 +1,7 @@
 from ml_collections import config_dict
 
 
-def get_IDQN_config():
+def get_DQN_config():
     config = config_dict.ConfigDict()
     config.LR = 0.005
     config.EPS = 1

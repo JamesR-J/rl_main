@@ -24,14 +24,15 @@ class PPOAgent(AgentBase):
         self.env_params = env_params
 
         if self.config.DISCRETE:
-            self.network = DiscreteActorCritic(env.action_space().n, config=config)
+            self.action_choices = env.action_space().n
+            self.action_dim = 1
+            self.network = DiscreteActorCritic(self.action_choices, config=config)
         else:
-            self.network = ContinuousActorCritic(env.action_space().shape, config=config, )
+            self.action_choices = None
+            self.action_dim = env.action_space().shape[0]  # TODO check this
+            self.network = ContinuousActorCritic(self.action_dim, env.action_space().low, env.action_space().high)
 
-        if self.config.CNN:
-            init_x = jnp.zeros((1, config.NUM_ENVS, *env.observation_space(env_params).shape))
-        else:
-            init_x = jnp.zeros((1, config.NUM_ENVS, *utils.observation_space(env, env_params)))
+        init_x = jnp.zeros((1, config.NUM_ENVS, *env.observation_space(env_params).shape))
 
         key, _key = jrandom.split(key)
         self.network_params = self.network.init(_key, init_x)
@@ -57,39 +58,45 @@ class PPOAgent(AgentBase):
                                   tx=self.tx),
                 MemoryState(hstate=jnp.zeros((self.config.NUM_ENVS, 1)),
                             extras={
-                                "values": jnp.zeros(self.config.NUM_ENVS),
-                                "log_probs": jnp.zeros(self.config.NUM_ENVS),
+                                "values": jnp.zeros(self.config.NUM_ENVS, dtype=jnp.float32),
+                                "log_probs": jnp.zeros(self.config.NUM_ENVS, dtype=jnp.float32),
                             })
                 )
 
     @partial(jax.jit, static_argnums=(0,))
     def reset_memory(self, mem_state):
-        mem_state = mem_state._replace(extras={
-            "values": jnp.zeros(self.config.NUM_ENVS),
-            "log_probs": jnp.zeros(self.config.NUM_ENVS),
-        },
-            hstate=jnp.zeros((self.config.NUM_ENVS, 1)),
-        )
+        mem_state = mem_state._replace(extras={"values": jnp.zeros(self.config.NUM_ENVS),
+                                               "log_probs": jnp.zeros(self.config.NUM_ENVS),},
+                                       hstate=jnp.zeros((self.config.NUM_ENVS, 1))
+                                       )
         return mem_state
 
     @partial(jax.jit, static_argnums=(0,))
-    def act(self, train_state: Any, mem_state: Any, ac_in: Any, key: Any):  # TODO better implement checks
+    def act(self, train_state: Any, mem_state: Any, ac_in: Any, key: Any):
         pi, value, action_logits = train_state.apply_fn(train_state.params, ac_in[0])
         key, _key = jrandom.split(key)
         action = pi.sample(seed=_key)
-        # action = jnp.clip(action, -self.env.params.A_MAX, self.env.params.A_MAX)  # TODO add for continuous somehow
+
+        # def callback(action):
+        #     print(action)
+        #     print("NEW ONE")
+        #
+        # jax.experimental.io_callback(callback, None, action_logits)
+
+        # action = jnp.clip(action, self.env.action_space().low, self.env.action_space().high)  # TODO add for continuous somehow
+
         log_prob = pi.log_prob(action)
 
         mem_state.extras["values"] = value
         mem_state.extras["log_probs"] = log_prob
 
-        mem_state = mem_state._replace(extras=mem_state.extras)
+        new_mem_state = mem_state._replace(extras=mem_state.extras)
 
-        return mem_state, action, key
+        return new_mem_state, action, key
 
     @partial(jax.jit, static_argnums=(0,))
     def update(self, runner_state, agent, traj_batch_LNZ, unused_2):
-        train_state, mem_state, env_state, ac_in, key = runner_state
+        train_state, mem_state, ac_in, key = runner_state
         _, last_val, _ = train_state.apply_fn(train_state.params, ac_in[0])
 
         def _calculate_gae(traj_batch, last_val):
@@ -102,7 +109,7 @@ class PPOAgent(AgentBase):
                 return (gae_N, value_N), gae_N
 
             _, advantages_LN = jax.lax.scan(_get_advantages,
-                                         (jnp.zeros_like(last_val), last_val),
+                                         (jnp.zeros_like(last_val, dtype=jnp.float64), last_val),
                                          traj_batch,
                                          reverse=True,
                                          unroll=16,
@@ -113,9 +120,9 @@ class PPOAgent(AgentBase):
 
         def _update_epoch(update_state, unused):
             def _update_minbatch(train_state, batch_info):
-                traj_batch, advantages, targets = batch_info
+                traj_batch, advantages, targets, key = batch_info
 
-                def _loss_fn(params, traj_batch, gae, targets):
+                def _loss_fn(params, traj_batch, gae, targets, key):
                     # RERUN NETWORK
                     pi, value, _ = train_state.apply_fn(params, traj_batch.obs)
                     log_prob = pi.log_prob(traj_batch.action)
@@ -124,6 +131,13 @@ class PPOAgent(AgentBase):
                     value_pred_clipped = traj_batch.mem_state.extras["values"] + (value - traj_batch.mem_state.extras["values"]).clip(-self.agent_config.CLIP_EPS,
                                                                                             self.agent_config.CLIP_EPS)
                     value_losses = jnp.square(value - targets)
+
+                    # def callback(action_logits):
+                    #     print(action_logits)
+                    #     print("NEW ONE")
+                    #
+                    # jax.experimental.io_callback(callback, None, value_losses)
+
                     value_losses_clipped = jnp.square(value_pred_clipped - targets)
                     value_loss = 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean(
                         where=(1 - traj_batch.done))
@@ -138,7 +152,8 @@ class PPOAgent(AgentBase):
                                             ) * gae)
                     loss_actor = -jnp.minimum(loss_actor1, loss_actor2)
                     loss_actor = loss_actor.mean(where=(1 - traj_batch.done))
-                    entropy = pi.entropy().mean(where=(1 - traj_batch.done))
+                    key, _key = jrandom.split(key)
+                    entropy = pi.entropy(seed=_key).mean(where=(1 - traj_batch.done))
 
                     total_loss = (loss_actor
                                   + self.agent_config.VF_COEF * value_loss
@@ -148,7 +163,7 @@ class PPOAgent(AgentBase):
                     return total_loss, (value_loss, loss_actor, entropy)
 
                 grad_fn = jax.value_and_grad(_loss_fn, has_aux=True)
-                total_loss, grads = grad_fn(train_state.params, traj_batch, advantages, targets)
+                total_loss, grads = grad_fn(train_state.params, traj_batch, advantages, targets, key)
                 train_state = train_state.apply_gradients(grads=grads)
                 return train_state, total_loss
 
@@ -156,16 +171,15 @@ class PPOAgent(AgentBase):
             key, _key = jrandom.split(key)
 
             permutation = jrandom.permutation(_key, self.config.NUM_ENVS)
-            batch = (traj_batch,
-                     advantages,
-                     targets)
+            batch = (traj_batch, advantages, targets)
             shuffled_batch = jax.tree_util.tree_map(lambda x: jnp.take(x, permutation, axis=1), batch)
 
             minibatches = jax.tree_util.tree_map(lambda x: jnp.swapaxes(
                 jnp.reshape(x, [x.shape[0], self.agent_config.NUM_MINIBATCHES, -1] + list(x.shape[2:]), ), 1, 0, ),
-                                                 shuffled_batch, )
+                                                 shuffled_batch)
 
-            train_state, total_loss = jax.lax.scan(_update_minbatch, train_state, minibatches)
+            batch_key = jrandom.split(key, self.agent_config.NUM_MINIBATCHES)
+            train_state, total_loss = jax.lax.scan(_update_minbatch, train_state, (*minibatches, batch_key))
 
             update_state = (train_state,
                             traj_batch,
@@ -180,8 +194,8 @@ class PPOAgent(AgentBase):
         train_state, traj_batch, advantages, targets, key = update_state
 
         info = {"value_loss": jnp.mean(loss_info[1][0]),
-                "actor_loss": jnp.mean(loss_info[1][1]),
+                "policy_loss": jnp.mean(loss_info[1][1]),
                 "entropy": jnp.mean(loss_info[1][2]),
                 }
 
-        return train_state, mem_state, env_state, info, key
+        return train_state, mem_state, info, key

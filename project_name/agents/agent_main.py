@@ -42,10 +42,10 @@ class Agent:
         return self.agent.reset_memory(mem_state)
 
     @partial(jax.jit, static_argnums=(0,))
-    def update(self, train_state: Any, mem_state: Any, env_state: Any, last_obs_batch: Any, last_done: Any, key: Any,
+    def update(self, train_state: Any, mem_state: Any, last_obs_batch: Any, last_done: Any, key: Any,
                trajectory_batch: Any):  # TODO add better chex
         ac_in = (last_obs_batch, last_done)
-        train_state = (train_state, mem_state, env_state, ac_in, key)
-        train_state, mem_state, env_state, info, key = self.agent.update(train_state, 0, trajectory_batch, None)
+        train_state = (train_state, mem_state, ac_in, key)
+        train_state, mem_state, info, key = self.agent.update(train_state, 0, trajectory_batch, None)
 
-        return train_state, mem_state, env_state, info, key
+        return train_state, mem_state, info, key

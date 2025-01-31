@@ -6,7 +6,7 @@ import jax.random as jrandom
 from functools import partial
 import optax
 from flax.training.train_state import TrainState
-from project_name.utils import MemoryState, TransitionFlashbax
+from project_name.utils import MemoryState, TransitionFlashbax, flip_and_switch
 from project_name.agents import AgentBase
 import chex
 from project_name.agents.BootDQN import get_BootDQN_config, EnsembleNetwork
@@ -54,7 +54,8 @@ class BootDQNAgent(AgentBase):
             self.action_dim = 1
             self.action_choices = env.action_space().n
         else:
-            sys.exit()  # TODO implement continuous
+            print("Q learning continuous no no")
+            sys.exit()
 
         if self.config.CNN:
             self._init_x = jnp.zeros((1, config.NUM_ENVS, *env.observation_space(env_params).shape))
@@ -72,10 +73,9 @@ class BootDQNAgent(AgentBase):
                                            add_batch_size=self.config.NUM_ENVS)  # TODO should this be the real batch size?
 
         self.buffer = self.buffer.replace(init=jax.jit(self.buffer.init),
-            add=jax.jit(self.buffer.add, donate_argnums=0),
-            sample=jax.jit(self.buffer.sample),
-            can_sample=jax.jit(self.buffer.can_sample),
-        )
+                                          add=jax.jit(self.buffer.add, donate_argnums=0),
+                                          sample=jax.jit(self.buffer.sample),
+                                          can_sample=jax.jit(self.buffer.can_sample))
 
         self.eps_scheduler = optax.linear_schedule(init_value=self.agent_config.EPS_START,
                                                    end_value=self.agent_config.EPS_FINISH,
@@ -98,23 +98,13 @@ class BootDQNAgent(AgentBase):
 
         return (TrainStateBootDQN(ensemble_train_state,
                                   ensemble_train_state),
-                self.buffer.init(
-                    # TransitionBootDQN(done=jnp.zeros((self.config.NUM_ENVS,), dtype=bool),
-                    #                    action=jnp.zeros((self.config.NUM_ENVS, self.action_dim), dtype=jnp.int32),
-                    #                    reward=jnp.zeros((self.config.NUM_ENVS,)),
-                    #                    obs=jnp.zeros((self.config.NUM_ENVS,
-                    #                                   *self.utils.observation_space(self.env, self.env_params)),
-                    #                                  dtype=jnp.float32),
-                    #                    noise=jnp.zeros((self.config.NUM_ENVS, self.agent_config.NUM_ENSEMBLE)),
-                    #                    mask=jnp.zeros((self.config.NUM_ENVS, self.agent_config.NUM_ENSEMBLE))
-                    #                    ))
-                TransitionBootDQN(done=jnp.zeros((), dtype=bool),
-        action = jnp.zeros((1,), dtype=jnp.int32),
-        reward = jnp.zeros(()),
-        obs = jnp.zeros((*self.utils.observation_space(self.env, self.env_params),), dtype=jnp.float32),
-        noise = jnp.zeros((self.agent_config.NUM_ENSEMBLE,)),
-        mask = jnp.zeros((self.agent_config.NUM_ENSEMBLE,))
-        ))
+                self.buffer.init(TransitionBootDQN(done=jnp.zeros((), dtype=bool),
+                                 action = jnp.zeros((1,), dtype=jnp.int32),
+                                 reward = jnp.zeros(()),
+                                 obs = jnp.zeros((*self.utils.observation_space(self.env, self.env_params),), dtype=jnp.float32),
+                                 noise = jnp.zeros((self.agent_config.NUM_ENSEMBLE,)),
+                                 mask = jnp.zeros((self.agent_config.NUM_ENSEMBLE,)))
+                                 )
                 )
 
     @partial(jax.jit, static_argnums=(0,))
@@ -125,12 +115,7 @@ class BootDQNAgent(AgentBase):
     def _eps_greedy_exploration(self, key, q_vals_NA, eps):
         key, _key = jax.random.split(key)
         greedy_actions_N = jnp.argmax(q_vals_NA, axis=-1)
-        random_actions_N = jrandom.randint(_key,
-                                         greedy_actions_N.shape,
-                                         # self.env.action_space(self.env_params).low,
-                                         # self.env.action_space(self.env_params).high
-                                         0,
-                                         self.action_choices)  # TODO this for discrete but not continuous
+        random_actions_N = jrandom.randint(_key, greedy_actions_N.shape, 0, self.action_choices)
 
         key, _key = jax.random.split(key)
         chosen_actions_N = jnp.where(jax.random.uniform(_key, greedy_actions_N.shape) < eps,  # pick random actions
@@ -157,7 +142,7 @@ class BootDQNAgent(AgentBase):
         def single_reward_noise(ens_state: TrainStateRP, obs_LNO: chex.Array, action_LNA: chex.Array) -> chex.Array:
             rew_pred = ens_state.apply_fn({"params": {"_net": ens_state.params,
                                                       "_prior_net": ens_state.static_prior_params}},
-                                          obs_LNO, action_LNA)  # TODO needs a 1 if only 1 dimensional action
+                                          obs_LNO, action_LNA)
             return rew_pred
 
         ensembled_reward_ULN1 = jax.vmap(single_reward_noise)(ens_state,
@@ -177,8 +162,7 @@ class BootDQNAgent(AgentBase):
                                 (*traj_batch_LNZ[0].shape, self.agent_config.NUM_ENSEMBLE))
         noise_LNU = jrandom.normal(_key, (*traj_batch_LNZ[0].shape, self.agent_config.NUM_ENSEMBLE))
 
-        def flip_and_switch(tracer):
-            return jnp.swapaxes(tracer, 0, 1)
+
 
         mem_state = self.buffer.add(mem_state, TransitionBootDQN(done=flip_and_switch(traj_batch_LNZ.done),
                                                                   action=flip_and_switch(jnp.expand_dims(traj_batch_LNZ.action, axis=-1)),

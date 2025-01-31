@@ -48,6 +48,10 @@ class EvalTransition(NamedTuple):
     env_state: jnp.ndarray
 
 
+def flip_and_switch(tracer):
+    return jnp.swapaxes(tracer, 0, 1)
+
+
 def import_class_from_folder(folder_name):
     """
     Imports a class from a folder with the same name

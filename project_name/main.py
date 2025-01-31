@@ -7,6 +7,9 @@ from jax.lib import xla_bridge
 import jax.profiler
 
 
+jax.config.update("jax_enable_x64", False)  # TODO unsure if need or not but will check results
+
+
 def main(_):
     config = get_config()
 
@@ -24,7 +27,7 @@ def main(_):
         entity=config.WANDB_ENTITY,
         config=config,
         # group="ks_tests",
-        group="discrete_tests",
+        group="continuous_tests",
         mode=config.WANDB
     )
 

@@ -9,7 +9,7 @@ from typing import Any, Tuple, NamedTuple
 import distrax
 import rlax
 from flax.training.train_state import TrainState
-from project_name.utils import MemoryState
+from project_name.utils import MemoryState, flip_and_switch
 from project_name.agents import AgentBase
 from project_name.agents.SAC import get_SAC_config, DiscreteActor, DiscreteDoubleSoftQNetwork, ContinuousActor, ContinuousDoubleSoftQNetwork
 import optax
@@ -22,7 +22,7 @@ from project_name.utils import TrainStateExt, TransitionFlashbax
 class TrainStateSAC(NamedTuple):
     critic_state: TrainStateExt
     actor_state: TrainStateExt
-    log_alpha: flax.core.FrozenDict
+    log_alpha: jnp.ndarray
     alpha_opt_state: optax.OptState
     n_updates: int = 0
 
@@ -41,31 +41,38 @@ class SACAgent(AgentBase):
             self.critic_network = DiscreteDoubleSoftQNetwork(env.action_space(env_params).shape)
             self.actor_network = DiscreteActor(env.action_space(env_params).n)
             self.critic_params = self.critic_network.init(critic_key,
-                                                          jnp.zeros((1, config.NUM_ENVS, *utils.observation_space(env, env_params))))
+                                                          jnp.zeros((1, config.NUM_ENVS, *env.observation_space(env_params).shape)))
         else:
             self.critic_network = ContinuousDoubleSoftQNetwork()
-            self.actor_network = ContinuousActor(env.action_space(env_params).shape, self.agent_config)
+            self.actor_network = ContinuousActor(*env.action_space(env_params).shape,
+                                                 env.action_space().low,
+                                                 env.action_space().high)
             self.critic_params = self.critic_network.init(critic_key,
                                                           jnp.zeros((1, config.NUM_ENVS,
-                                                                     *utils.observation_space(env, env_params))),
+                                                                     *env.observation_space(env_params).shape)),
                                                           jnp.zeros((1, config.NUM_ENVS,
-                                                                     env.action_space(env_params).shape))
+                                                                     *env.action_space(env_params).shape))
                                                           )
 
         self.actor_params = self.actor_network.init(actor_key,
                                                     jnp.zeros((1, config.NUM_ENVS,
-                                                               *utils.observation_space(env, env_params))))
+                                                               *env.observation_space(env_params).shape)))
 
         self.buffer = fbx.make_flat_buffer(max_length=self.agent_config.BUFFER_SIZE,
-                                                           min_length=self.agent_config.BATCH_SIZE,
-                                                           sample_batch_size=self.agent_config.BATCH_SIZE,
-                                                           add_sequences=True,
-                                                           add_batch_size=None)
+                                           min_length=self.agent_config.BATCH_SIZE,
+                                           sample_batch_size=self.agent_config.BATCH_SIZE,
+                                           add_sequences=True,
+                                           add_batch_size=self.config.NUM_ENVS)
+
+        self.buffer = self.buffer.replace(init=jax.jit(self.buffer.init),
+                                          add=jax.jit(self.buffer.add, donate_argnums=0),
+                                          sample=jax.jit(self.buffer.sample),
+                                          can_sample=jax.jit(self.buffer.can_sample))
 
         self.ACTION_SCALE = (env.action_space(env_params).high - env.action_space(env_params).low) / 2.0
         self.ACTION_BIAS =(env.action_space(env_params).high + env.action_space(env_params).low) / 2.0
 
-        self.target_entropy = -env.action_space(env_params).shape
+        self.target_entropy = -env.action_space(env_params).shape[0]
 
         self.alpha_optimiser = optax.adam(self.agent_config.ALPHA_LR)
 
@@ -84,15 +91,14 @@ class SACAgent(AgentBase):
                               log_alpha=log_alpha,
                               alpha_opt_state=self.alpha_optimiser.init(log_alpha)),
                 self.buffer.init(
-                    TransitionFlashbax(done=jnp.zeros((self.config.NUM_ENVS,), dtype=bool),
-                                       action=jnp.zeros((self.config.NUM_ENVS,
-                                                         self.env.action_space().shape), dtype=jnp.float32),
-                                       reward=jnp.zeros((self.config.NUM_ENVS,)),
-                                       obs=jnp.zeros((self.config.NUM_ENVS,
-                                                      *self.utils.observation_space(self.env, self.env_params)),
-                                                     dtype=jnp.float32),
-                                       # TODO is it always an int for the obs?
-                                       )))
+                    TransitionFlashbax(done=jnp.zeros((), dtype=bool),
+                                       action=jnp.zeros((*self.env.action_space().shape,), dtype=jnp.float32),
+                                       reward=jnp.zeros(()),
+                                       obs=jnp.zeros((*self.env.observation_space(self.env_params).shape,),
+                                                     dtype=jnp.float32)
+                                       )
+                                )
+                )
 
     @partial(jax.jit, static_argnums=(0,))
     def reset_memory(self, mem_state):
@@ -102,21 +108,18 @@ class SACAgent(AgentBase):
     def act(self, train_state: Any, mem_state: Any, ac_in: Any, key: chex.PRNGKey):
         pi = train_state.actor_state.apply_fn(train_state.actor_state.params, ac_in[0])
         key, _key = jrandom.split(key)
-        x_t = pi.sample(seed=_key)
-        y_t = jnp.tanh(x_t)
+        action_NA = pi.sample(seed=_key)
 
-        action = y_t * self.ACTION_SCALE + self.ACTION_BIAS
-
-        return mem_state, action, key
+        return mem_state, action_NA, key
 
     @partial(jax.jit, static_argnums=(0,))
     def update(self, runner_state, agent, traj_batch_LNZ, unused_2):
-        train_state, mem_state, env_state, ac_in, key = runner_state
+        train_state, mem_state, ac_in, key = runner_state
 
-        mem_state = self.buffer.add(mem_state, TransitionFlashbax(done=traj_batch_LNZ.done,
-                                                              action=traj_batch_LNZ.action,
-                                                              reward=traj_batch_LNZ.reward,
-                                                              obs=traj_batch_LNZ.obs,
+        mem_state = self.buffer.add(mem_state, TransitionFlashbax(done=flip_and_switch(traj_batch_LNZ.done),
+                                                              action=flip_and_switch(traj_batch_LNZ.action),
+                                                              reward=flip_and_switch(traj_batch_LNZ.reward),
+                                                              obs=flip_and_switch(traj_batch_LNZ.obs),
                                                               ))
 
         key, _key = jrandom.split(key)
@@ -126,35 +129,30 @@ class SACAgent(AgentBase):
         alpha = jnp.exp(log_alpha)
 
         def critic_loss(critic_target_params, critic_params, actor_params, batch, key):
-            obs_BNO = batch.experience.first.obs
-            action_BNA = batch.experience.first.action
-            reward_BN = batch.experience.first.reward
-            done_BN = batch.experience.first.done
-            nobs_BNO = batch.experience.second.obs
+            obs_BO = batch.experience.first.obs
+            action_BA = batch.experience.first.action
+            reward_B = batch.experience.first.reward
+            done_B = batch.experience.first.done
+            nobs_BO = batch.experience.second.obs
 
-            pi = train_state.actor_state.apply_fn(actor_params, nobs_BNO)
+            pi = train_state.actor_state.apply_fn(actor_params, nobs_BO)
             key, _key = jrandom.split(key)
-            x_t_BNA = pi.sample(seed=_key)
-            y_t_BNA = jnp.tanh(x_t_BNA)
-            naction_BNA = y_t_BNA * self.ACTION_SCALE + self.ACTION_BIAS
+            naction_BA = pi.sample(seed=_key)
+            nlog_prob_B = pi.log_prob(naction_BA)
 
-            nlog_prob_BNA = pi.log_prob(x_t_BNA)
-            nlog_prob_BNA = nlog_prob_BNA - jnp.log(self.agent_config.ACTION_SCALE * (1 - y_t_BNA ** 2) + 1e-6)
-            nlog_prob_BN1 = jnp.sum(nlog_prob_BNA, axis=-1, keepdims=True)
+            qf_next_target_B2 = train_state.critic_state.apply_fn(critic_target_params, nobs_BO, naction_BA)
+            qf_next_target_B = jnp.min(qf_next_target_B2, axis=-1) - alpha  * nlog_prob_B
 
-            qf_next_target_BN12 = train_state.critic_state.apply_fn(critic_target_params, nobs_BNO, naction_BNA)
-            qf_next_target_BN1 = jnp.min(qf_next_target_BN12, axis=-1) - alpha  * nlog_prob_BN1
-
-            next_q_value_BN = reward_BN + (1 - done_BN) * self.agent_config.GAMMA * jnp.squeeze(qf_next_target_BN1, axis=-1)
+            next_q_value_B = jax.lax.stop_gradient(reward_B + (1 - done_B) * self.agent_config.GAMMA * qf_next_target_B)
 
             # use Q-values only for the taken actions
-            qf_values_BN12 = train_state.critic_state.apply_fn(critic_params, obs_BNO, action_BNA)
+            qf_values_B2 = train_state.critic_state.apply_fn(critic_params, obs_BO, action_BA)
 
             def mse_loss(preds, targets):
                 return 0.5 * jnp.mean(jnp.square(preds - targets))
 
-            qf_loss = jax.vmap(mse_loss, in_axes=(2, 2))(jnp.squeeze(qf_values_BN12, axis=2),
-                                                         jnp.repeat(next_q_value_BN[..., None], 2, axis=-1))
+            qf_loss = jax.vmap(mse_loss, in_axes=(1, 1))(qf_values_B2,
+                                                         jnp.repeat(next_q_value_B[..., None], 2, axis=-1))
 
             return jnp.sum(qf_loss)
 
@@ -169,22 +167,17 @@ class SACAgent(AgentBase):
         new_critic_state = train_state.critic_state.apply_gradients(grads=grads)
 
         def actor_loss(critic_params, actor_params, batch, key):
-            obs_BNO = batch.experience.first.obs
+            obs_BO = batch.experience.first.obs
 
-            pi = train_state.actor_state.apply_fn(actor_params, obs_BNO)
+            pi = train_state.actor_state.apply_fn(actor_params, obs_BO)
             key, _key = jrandom.split(key)
-            x_t_BNA = pi.sample(seed=_key)
-            y_t_BNA = jnp.tanh(x_t_BNA)
-            action_BNA = y_t_BNA * self.ACTION_SCALE + self.ACTION_BIAS
+            action_BA = pi.sample(seed=_key)
+            log_prob_B = pi.log_prob(action_BA)
 
-            log_prob_BNA = pi.log_prob(x_t_BNA)
-            log_prob_BNA = log_prob_BNA - jnp.log(self.agent_config.ACTION_SCALE * (1 - y_t_BNA ** 2) + 1e-6)
-            log_prob_BN1 = jnp.sum(log_prob_BNA, axis=-1, keepdims=True)
+            min_qf_values_B2 = train_state.critic_state.apply_fn(critic_params, obs_BO, action_BA)
+            min_qf_values_B = jnp.min(min_qf_values_B2, axis=-1)
 
-            min_qf_values_BN12 = train_state.critic_state.apply_fn(critic_params, obs_BNO, action_BNA)
-            min_qf_values_BN1 = jnp.min(min_qf_values_BN12, axis=-1)
-
-            return jnp.mean(((alpha * log_prob_BN1) - min_qf_values_BN1))
+            return jnp.mean(((alpha * log_prob_B) - min_qf_values_B))
 
         actor_loss, grads = jax.value_and_grad(actor_loss, argnums=1)(train_state.critic_state.params,
                                                            train_state.actor_state.params,
@@ -194,18 +187,14 @@ class SACAgent(AgentBase):
         new_actor_state = train_state.actor_state.apply_gradients(grads=grads)
 
         def alpha_loss(log_alpha, actor_params, batch, key):
-            obs_BNO = batch.experience.first.obs
+            obs_BO = batch.experience.first.obs
 
-            pi = train_state.actor_state.apply_fn(actor_params, obs_BNO)
+            pi = train_state.actor_state.apply_fn(actor_params, obs_BO)
             key, _key = jrandom.split(key)
-            x_t_BNA = pi.sample(seed=_key)
-            y_t_BNA = jnp.tanh(x_t_BNA)
+            action_BA = pi.sample(seed=_key)
+            log_prob_B = pi.log_prob(action_BA)
 
-            log_prob_BNA = pi.log_prob(x_t_BNA)
-            log_prob_BNA = log_prob_BNA - jnp.log(self.agent_config.ACTION_SCALE * (1 - y_t_BNA ** 2) + 1e-6)
-            log_prob_BN1 = jnp.sum(log_prob_BNA, axis=-1, keepdims=True)
-
-            alpha_loss = -jnp.exp(log_alpha) * (log_prob_BN1 + self.target_entropy)
+            alpha_loss = jnp.exp(log_alpha) * jax.lax.stop_gradient(-log_prob_B - self.target_entropy)
 
             return jnp.mean(alpha_loss)
 
@@ -239,4 +228,4 @@ class SACAgent(AgentBase):
                 "alpha_loss": jnp.mean(alpha_loss),
                 }
 
-        return train_state, mem_state, env_state, info, key
+        return train_state, mem_state, info, key

@@ -33,19 +33,27 @@ def run_train(config):
             env = LogWrapper(env)
             utils = Utils_Cartpole(config)
 
-            env, env_params = gymnax.make("Acrobot-v1")
-            env = LogWrapper(env)
-            utils = Utils_Cartpole(config)
-
-            env, env_params = gymnax.make("DeepSea-bsuite")
+            # env, env_params = gymnax.make("Acrobot-v1")
+            # env = LogWrapper(env)
+            # utils = Utils_Cartpole(config)
+            #
+            env, env_params = gymnax.make("DeepSea-bsuite", size=config.DEEP_SEA_MAP, sample_action_map=True)
             env = FlattenObservationWrapper(env)
             env = LogWrapper(env)
-            utils = Utils_Cartpole(config)
+            # utils = Utils_Cartpole(config)
+
+            # env, env_params = gymnax.make("MountainCar-v0")
+            # env = LogWrapper(env)
+            # utils = Utils_Cartpole(config)
         else:
             env = KS_JAX() # TODO how to adjust default params for this step
             env_params = env.default_params
             env = LogWrapper(env)  # TODO does this work with the env?
-            utils = Utils_KS(config)
+            # utils = Utils_KS(config)
+
+            # env, env_params = gymnax.make("MountainCarContinuous-v0")
+            # env = LogWrapper(env)
+            # utils = Utils_Cartpole(config)
 
     # key = jax.random.PRNGKey(config.SEED)
     #
@@ -65,69 +73,61 @@ def run_train(config):
     def train():
         key = jax.random.PRNGKey(config.SEED)
 
-        actor = Agent(env=env, env_params=env_params, config=config, utils=utils, key=key)
+        actor = Agent(env=env, env_params=env_params, config=config, utils=None, key=key)
         train_state, mem_state = actor.initialise()
 
         reset_key = jrandom.split(key, config.NUM_ENVS)
-        obs_NO, env_state = jax.vmap(env.reset, in_axes=(0, None), axis_name="batch_axis")(reset_key, env_params)
+        init_obs_NO, env_state = jax.vmap(env.reset, in_axes=(0, None), axis_name="batch_axis")(reset_key, env_params)
 
-        runner_state = (train_state, mem_state, env_state, obs_NO, jnp.zeros(config.NUM_ENVS, dtype=bool), key)
+        runner_state = (train_state, mem_state, env_state, init_obs_NO, jnp.zeros(config.NUM_ENVS, dtype=bool), key)
 
         def _run_inner_update(update_runner_state, unused):
             runner_state, update_steps = update_runner_state
 
             def _run_episode_step(runner_state, unused):
                 # take initial env_state
-                train_state, mem_state, env_state, obs_NO, last_done_N, key = runner_state
+                train_state, mem_state, env_state, obs_NO, done_N, key = runner_state
 
-                mem_state, action_NA, key = actor.act(train_state, mem_state, obs_NO, last_done_N, key)
+                mem_state, action_NA, key = actor.act(train_state, mem_state, obs_NO, done_N, key)
 
                 # step in env
-                key, _key = jrandom.split(key)
-                key_step = jrandom.split(_key, config.NUM_ENVS)
-                nobs_NO, env_state, reward_N, done_N, info = jax.vmap(env.step, in_axes=(0, 0, 0, None),
+                # key, _key = jrandom.split(key)
+                key_step = jrandom.split(key, config.NUM_ENVS)
+                nobs_NO, env_state, reward_N, ndone_N, info = jax.vmap(env.step, in_axes=(0, 0, 0, None),
                                                               axis_name="batch_axis")(key_step,
                                                                                       env_state,
                                                                                       action_NA,
                                                                                       env_params
                                                                                       )
 
-                mem_state = actor.update_encoding(train_state, mem_state, nobs_NO, action_NA, reward_N, done_N, key)
+                # mem_state = actor.update_encoding(train_state, mem_state, nobs_NO, action_NA, reward_N, ndone_N, key)
 
-                transition = Transition(done_N, action_NA, reward_N, obs_NO, mem_state,
+                transition = Transition(ndone_N, action_NA, reward_N, obs_NO, mem_state,
                                         # env_state,  # TODO have added for info purposes
                                         info)
 
-                return (train_state, mem_state, env_state, obs_NO, done_N, key), transition
+                return (train_state, mem_state, env_state, nobs_NO, ndone_N, key), transition
 
-            runner_state, trajectory_batch_LNZ = jax.lax.scan(_run_episode_step, runner_state, None, config.NUM_INNER_STEPS)
-            train_state, mem_state, env_state, last_obs_NO, last_done_N, key = runner_state
+            ((train_state, mem_state, env_state, last_obs_NO, last_done_N, key),
+             trajectory_batch_LNZ) = jax.lax.scan(_run_episode_step, runner_state, None, config.NUM_INNER_STEPS)
 
-            train_state, mem_state, env_state, agent_info, key = actor.update(train_state, mem_state, env_state,
-                                                                              last_obs_NO, last_done_N, key,
-                                                                              trajectory_batch_LNZ)
+            train_state, mem_state, agent_info, key = actor.update(train_state, mem_state,  last_obs_NO,  last_done_N,
+                                                                   key, trajectory_batch_LNZ)
 
             def callback(traj_batch, env_stats, agent_stats, update_steps):
                 metric_dict = {"Total Steps": update_steps * config.NUM_ENVS * config.NUM_INNER_STEPS,
                                "Total_Episodes": update_steps * config.NUM_ENVS,
                                "avg_reward": traj_batch.reward.mean(),
-                               "returns": traj_batch.info["returned_episode_returns"].mean(),
+                               "avg_returns": traj_batch.info["returned_episode_returns"][traj_batch.info["returned_episode"]].mean(),
+                               "avg_episode_end_reward": traj_batch.info["reward"][traj_batch.info["returned_episode"]].mean(),
                                "avg_action": traj_batch.action.mean()}
-
-                print(traj_batch.info)
 
                 # shape is LN, so we are averaging over the num_envs and episode
                 for item in agent_info:
                     metric_dict[f"{item}"] = agent_stats[item]
 
-                # # TODO below must be sooo slow but maybe it works fine?
-                # step_metric_dict = {}
-                # for step_idx in range(config.NUM_INNER_STEPS):
-                #     for idx, agent in enumerate(config.AGENT_TYPE):
-                #         # shape is LN, so we are averaging over the num_envs
-                #         step_metric_dict["reward"] = traj_batch.reward[step_idx].mean()
-                #         for item in agent_info:
-                #             step_metric_dict[f"{item}"] = agent_info[item][step_idx]
+                # print(traj_batch.info["reward"][traj_batch.info["returned_episode"]].mean())
+
                 wandb.log(metric_dict)
 
             # env_stats = jax.tree_util.tree_map(lambda x: x.mean(), utils.visitation(env_state,

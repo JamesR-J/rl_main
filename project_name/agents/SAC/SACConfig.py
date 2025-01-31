@@ -9,7 +9,7 @@ def get_SAC_config():
     config.GAE_LAMBDA = 0.95
     config.NUM_MINIBATCHES = 4
 
-    config.BUFFER_SIZE = 10000#0  # 1e5  # TODO change back to full asap
+    config.BUFFER_SIZE = 100000#0
     config.BATCH_SIZE = 32  # 128
     config.EPS_START = 1.0
     config.EPS_FINISH = 0.05
@@ -27,7 +27,7 @@ def get_SAC_config():
 
     config.LOGSTD_MIN = -1
     config.LOGSTD_MAX = 1
-    config.INIT_ALPHA = 0.1
+    config.INIT_ALPHA = 1.0  # 0.1
     config.ALPHA_LR = 0.001
 
     return config

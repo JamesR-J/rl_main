@@ -8,25 +8,25 @@ import optax
 from flax.training.train_state import TrainState
 from project_name.utils import MemoryState
 from project_name.agents import AgentBase
-from project_name.agents.IDQN import get_IDQN_config, RNNQNetwork, ScannedRNN
+from project_name.agents.DQN import get_DQN_config, RNNQNetwork, ScannedRNN
 import flashbax as fbx
 
 
-class IDQNTrainState(TrainState):
+class DQNTrainState(TrainState):
     target_network_params: Any
     timesteps: int = 0
     n_updates: int = 0
     grad_steps: int = 0
 
 
-class TransitionIDQN(NamedTuple):  # TODO can we standardise this for all dqn approaches?
+class TransitionDQN(NamedTuple):  # TODO can we standardise this for all dqn approaches?
     done: jnp.ndarray
     action: jnp.ndarray
     reward: jnp.ndarray
     obs: jnp.ndarray
 
 
-class IDQNAgent(AgentBase):
+class DQNAgent(AgentBase):
     def __init__(self,
                  env,
                  env_params,
@@ -34,7 +34,7 @@ class IDQNAgent(AgentBase):
                  config,
                  utils):
         self.config = config
-        self.agent_config = get_IDQN_config()
+        self.agent_config = get_DQN_config()
         self.env = env
         self.env_params = env_params
         self.utils = utils
@@ -48,7 +48,7 @@ class IDQNAgent(AgentBase):
                       jnp.zeros((1, config.NUM_ENVS)),
                       )
         else:
-            init_x = (jnp.zeros((1, config.NUM_ENVS, utils.observation_space(env, env_params))),
+            init_x = (jnp.zeros((1, config.NUM_ENVS, *utils.observation_space(env, env_params))),
                       jnp.zeros((1, config.NUM_ENVS)),
                       )
 
@@ -69,7 +69,7 @@ class IDQNAgent(AgentBase):
 
         self.eps_scheduler = optax.linear_schedule(init_value=self.agent_config.EPS_START,
                                                    end_value=self.agent_config.EPS_FINISH,
-                                                   transition_steps=self.agent_config.EPS_DECAY * config.NUM_UPDATES,
+                                                   transition_steps=self.agent_config.EPS_DECAY * config.NUM_ENVS,
                                                    )
 
         def linear_schedule(count):  # TODO put this somewhere better
@@ -87,17 +87,17 @@ class IDQNAgent(AgentBase):
                                   )
 
     def create_train_state(self):
-        return (IDQNTrainState.create(apply_fn=self.network.apply,
+        return (DQNTrainState.create(apply_fn=self.network.apply,
                                       params=self.network_params,
                                       target_network_params=self.network_params,
                                       tx=self.tx),
-                self.buffer.init(TransitionIDQN(done=jnp.zeros((self.config.NUM_INNER_STEPS,), dtype=bool),
+                self.buffer.init(TransitionDQN(done=jnp.zeros((self.config.NUM_INNER_STEPS,), dtype=bool),
                                                 action=jnp.zeros((self.config.NUM_INNER_STEPS,),
                                                                  dtype=jnp.int32),
                                                 reward=jnp.zeros((self.config.NUM_INNER_STEPS,)),
                                                 obs=jnp.zeros((self.config.NUM_INNER_STEPS,
-                                                               self.utils.observation_space(self.env, self.env_params)),
-                                                              dtype=jnp.int8),
+                                                               *self.utils.observation_space(self.env, self.env_params)),
+                                                              dtype=jnp.float32),
                                                 # TODO is it always an int for the obs?
                                                 ))
                 )
@@ -139,20 +139,15 @@ class IDQNAgent(AgentBase):
     def act(self, train_state: Any, mem_state: Any, ac_in: Any, key: Any):  # TODO better implement checks
         _, q_vals = train_state.apply_fn(train_state.params, None, ac_in)  # TODO no rnn for now
         eps = self.eps_scheduler(train_state.n_updates)
-        q_vals = q_vals.squeeze(axis=0)
+        # q_vals = q_vals.squeeze(axis=0)
         valid_actions = jnp.ones_like(q_vals)
         action = self._eps_greedy_exploration(key, q_vals, eps, valid_actions)
 
-        log_prob = jnp.zeros((1,))
-        value = jnp.zeros((1,))  # TODO sort these out
-
-        return mem_state, action, log_prob, value, key
+        return mem_state, action, key
 
     @partial(jax.jit, static_argnums=(0,))
     def update(self, runner_state, agent, traj_batch, unused_2):
-        traj_batch = jax.tree_map(lambda x: x[:, agent], traj_batch)
-        # print(traj_batch)
-        train_state, mem_state, env_state, ac_in, key = runner_state
+        train_state, mem_state, ac_in, key = runner_state
 
         def flip_and_switch(tracer):
             return jnp.swapaxes(tracer, 0, 1)[:, jnp.newaxis]
@@ -160,7 +155,7 @@ class IDQNAgent(AgentBase):
         # buffer_traj_batch = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1)[:, jnp.newaxis], traj_batch)
 
         mem_state = self.buffer.add(mem_state,
-                                    TransitionIDQN(done=flip_and_switch(traj_batch.done),  # TODO check the dims here
+                                    TransitionDQN(done=flip_and_switch(traj_batch.done),  # TODO check the dims here
                                                    action=flip_and_switch(traj_batch.action),
                                                    reward=flip_and_switch(traj_batch.reward),
                                                    obs=flip_and_switch(traj_batch.obs),
@@ -243,7 +238,7 @@ class IDQNAgent(AgentBase):
                                                                                       self.agent_config.TAU)),
                                    lambda train_state: train_state, operand=train_state)
 
-        info = {"value_loss": jnp.mean(loss),  # TODO technically q loss?
+        info = {"value_loss": jnp.mean(loss),
                 }
 
-        return train_state, mem_state, env_state, info, key
+        return train_state, mem_state, info, key

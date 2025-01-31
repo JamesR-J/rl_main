@@ -1,2 +1,2 @@
 from .network import RNNQNetwork, ScannedRNN
-from .IDQNConfig import get_IDQN_config
+from .DQNConfig import get_DQN_config
