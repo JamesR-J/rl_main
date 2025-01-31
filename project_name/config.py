@@ -9,15 +9,15 @@ def get_config():
     config.CNN = False
     # config.CNN = True
 
-    # config.DISCRETE = False
-    config.DISCRETE = True
+    config.DISCRETE = False
+    # config.DISCRETE = True
 
-    config.NUM_INNER_STEPS = 24  # 200#0  # ep rollout length
+    config.NUM_INNER_STEPS = 200#0  # ep rollout length
     config.NUM_EPISODES = 5000  # number of ep rollouts to run
-    config.NUM_ENVS = 32  # 64  # 128
+    config.NUM_ENVS = 64  # 128
     config.NUM_DEVICES = 1
 
-    config.DEEP_SEA_MAP = 12
+    config.DEEP_SEA_MAP = 20
 
     # config.WANDB = "disabled"
     config.WANDB = "online"
@@ -27,10 +27,10 @@ def get_config():
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
-    # config.AGENT_TYPE = "DDPG"
+    config.AGENT_TYPE = "DDPG"
     # config.AGENT_TYPE = "PPO"
     # config.AGENT_TYPE = "SAC"
-    config.AGENT_TYPE = "ERSAC"
+    # config.AGENT_TYPE = "ERSAC"
     # config.AGENT_TYPE = "BootDQN"
     # config.AGENT_TYPE = "DQN"
 

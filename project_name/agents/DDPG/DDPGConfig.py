@@ -12,9 +12,7 @@ def get_DDPG_config():
 
     config.BUFFER_SIZE = 100000#0
     config.BATCH_SIZE = 32  # 128
-    config.EPS_START = 1.0
-    config.EPS_FINISH = 0.05
-    config.EPS_DECAY = 0.1
+    config.EPS_DECAY = 0.6  # 0.1
 
     config.UPDATE_EPOCHS = 4
     config.TARGET_UPDATE_INTERVAL = 10
@@ -23,7 +21,6 @@ def get_DDPG_config():
 
     config.LEARNING_STARTS = 1000  # does this change depending on episodes?
 
-    config.ACTION_SCALE = 1.0
     config.EXPLORATION_NOISE = 0.1  # 0.2
 
     return config

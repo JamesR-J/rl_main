@@ -38,8 +38,7 @@ class DDPGAgent(AgentBase):
         self.action_dim = env.action_space().shape[0]  # TODO check this
 
         self.critic_network = ContinuousQNetwork(config=config)  # TODO separate RNN and normal
-        self.actor_network = DeterministicPolicy(self.action_dim, config=config,
-                                                 action_scale=self.agent_config.ACTION_SCALE)
+        self.actor_network = DeterministicPolicy(self.action_dim, env.action_space().low, env.action_space().high)
 
         key, _key = jrandom.split(key)
 
@@ -48,7 +47,7 @@ class DDPGAgent(AgentBase):
 
         init_actor_x = jnp.zeros((1, config.NUM_ENVS, *env.observation_space(env_params).shape))
 
-        self.critic_network_params = self.critic_network.init(_key, init_x[0], init_x[1])
+        self.critic_network_params = self.critic_network.init(_key, *init_x)
         self.actor_network_params = self.actor_network.init(_key, init_actor_x)
 
         self.agent_config.NUM_MINIBATCHES = min(self.config.NUM_ENVS, self.agent_config.NUM_MINIBATCHES)
@@ -64,8 +63,8 @@ class DDPGAgent(AgentBase):
                                           sample=jax.jit(self.buffer.sample),
                                           can_sample=jax.jit(self.buffer.can_sample))
 
-        self.eps_scheduler = optax.linear_schedule(init_value=self.agent_config.EPS_START,
-                                                   end_value=self.agent_config.EPS_FINISH,
+        self.eps_scheduler = optax.linear_schedule(init_value=1.0,
+                                                   end_value=1e-6,
                                                    transition_steps=self.agent_config.EPS_DECAY * config.NUM_EPISODES,
                                                    )
 
@@ -73,6 +72,8 @@ class DDPGAgent(AgentBase):
             frac = (1.0 - (count // (
                     self.agent_config.NUM_MINIBATCHES * self.agent_config.UPDATE_EPOCHS)) / config.NUM_EPISODES)
             return self.agent_config.LR * frac
+
+        self.ACTION_SCALE = (env.action_space().high - env.action_space().low) / 2
 
     def create_train_state(self):
         return (TrainStateDDPG(critic_state=TrainStateExt.create(apply_fn=self.critic_network.apply,
@@ -97,7 +98,7 @@ class DDPGAgent(AgentBase):
 
     @partial(jax.jit, static_argnums=(0,))
     def act(self, train_state: Any, mem_state: Any, ac_in: Any, key: Any):  # TODO better implement checks
-        action = train_state.actor_state.apply_fn(train_state.actor_state.params, ac_in[0])  # TODO no rnn for now
+        action = train_state.actor_state.apply_fn(train_state.actor_state.params, ac_in[0]).mode()  # TODO no rnn for now
         key, _key = jrandom.split(key)
 
         # def callback(action, state):
@@ -109,8 +110,16 @@ class DDPGAgent(AgentBase):
 
         # action += jnp.clip(jrandom.normal(_key, action.shape) * self.agent_config.ACTION_SCALE * self.agent_config.EXPLORATION_NOISE,
         #                    self.env.action_space().low, self.env.action_space().high)
+
+        exploration_noise = self.eps_scheduler(train_state.n_updates)
+
         action = rlax.add_gaussian_noise(_key, action,
-                                         self.agent_config.ACTION_SCALE * self.agent_config.EXPLORATION_NOISE).clip(self.env.action_space().low, self.env.action_space().high)
+                                         self.ACTION_SCALE * exploration_noise).clip(self.env.action_space().low, self.env.action_space().high)
+
+        # def callback(action):
+        #     print(action)
+        #
+        # jax.experimental.io_callback(callback, None, exploration_noise)
 
         return mem_state, action, key
 
@@ -134,7 +143,7 @@ class DDPGAgent(AgentBase):
             done_B = batch.experience.first.done
             nobs_BO = batch.experience.second.obs
 
-            action_pred_BA = train_state.actor_state.apply_fn(actor_target_params, nobs_BO)
+            action_pred_BA = train_state.actor_state.apply_fn(actor_target_params, nobs_BO).mode()
             action_pred_BA = jnp.clip(action_pred_BA, self.env.action_space().low, self.env.action_space().high)
             target_val_B1 = train_state.critic_state.apply_fn(critic_target_params, nobs_BO, action_pred_BA)
 
@@ -164,7 +173,7 @@ class DDPGAgent(AgentBase):
         def policy_loss(critic_params, actor_params, batch):
             obs_BO = batch.experience.first.obs
 
-            action_pred_BA = jnp.clip(train_state.actor_state.apply_fn(actor_params, obs_BO),
+            action_pred_BA = jnp.clip(train_state.actor_state.apply_fn(actor_params, obs_BO).mode(),
                                       self.env.action_space().low, self.env.action_space().high)
 
             # jax.debug.print("Policy output mean: {}", jnp.mean(action_pred_BA))
@@ -219,7 +228,8 @@ class DDPGAgent(AgentBase):
                                            n_updates=train_state.n_updates+1)
 
         info = {"value_loss": jnp.mean(critic_loss),
-                "policy_loss": jnp.mean(actor_loss)
+                "policy_loss": jnp.mean(actor_loss),
+                "exploration_schedule": jnp.mean(self.eps_scheduler(train_state.n_updates))
                 }
 
         return train_state, mem_state, info, key

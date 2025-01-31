@@ -5,7 +5,7 @@ import functools
 import jax.numpy as jnp
 import jax.random as jrandom
 import numpy as np
-from flax.linen.initializers import constant, orthogonal
+from flax.linen.initializers import constant, orthogonal, kaiming_normal
 from typing import Sequence, NamedTuple, Any, Dict, Optional
 import distrax
 from ml_collections import ConfigDict
@@ -24,6 +24,80 @@ class CNNtoLinear(nn.Module):
         return flatten_layer
 
 
+class DiscreteQNetwork(nn.Module):
+
+    @nn.compact
+    def __call__(self, x, a):
+        x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        x = nn.LayerNorm()(x)
+        x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        x = nn.LayerNorm()(x)
+        # x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        # x = nn.LayerNorm()(x)
+        # x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        # x = nn.LayerNorm()(x)
+        q_vals = nn.Dense(1, kernel_init=orthogonal(1.0))(x)
+
+        return jnp.squeeze(q_vals, axis=-1)
+
+
+class ContinuousQNetwork(nn.Module):
+
+    @nn.compact
+    def __call__(self, s, a):
+        x = jnp.concatenate((s, a), axis=-1)
+        x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        x = nn.LayerNorm()(x)
+        x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        x = nn.LayerNorm()(x)
+        # x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        # x = nn.LayerNorm()(x)
+        # x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        # x = nn.LayerNorm()(x)
+        q_vals = nn.Dense(1, kernel_init=orthogonal(1.0))(x)
+
+        return jnp.squeeze(q_vals, axis=-1)
+
+
+class DiscreteActor(nn.Module):
+    action_dim: int
+
+    @nn.compact
+    def __call__(self, x):
+        x = nn.relu(nn.Dense(256, kernel_init=kaiming_normal(), bias_init=constant(0.0))(x))
+        x = nn.relu(nn.Dense(128, kernel_init=kaiming_normal(), bias_init=constant(0.0))(x))
+
+        logits = nn.Dense(self.action_dim, kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
+
+        pi = Categorical(logits=logits)
+
+        return pi
+
+
+class ContinuousActor(nn.Module):
+    action_dim: int
+    minimum_action: float
+    maximum_action: float
+    min_scale: float = 1e-3
+
+    @nn.compact
+    def __call__(self, x):
+        x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        # x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        # x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+
+        action_mean = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01))(x)
+        action_logstd = jax.nn.softplus(nn.Dense(self.action_dim, kernel_init=orthogonal(0.01))(x)) + self.min_scale
+
+        pi = Normal(action_mean, jnp.exp(action_logstd))
+
+        return Independent(AffineTanhTransformedDistribution(pi,
+                                                             self.minimum_action,
+                                                             self.maximum_action),
+                           reinterpreted_batch_ndims=1)
+
+
 class DiscreteActorCritic(nn.Module):
     action_dim: int
     config: ConfigDict
@@ -31,7 +105,7 @@ class DiscreteActorCritic(nn.Module):
     activation: str = "tanh"
 
     @nn.compact
-    def __call__(self, obs):
+    def __call__(self, obs, actions):
         if self.activation == "relu":
             activation = nn.relu
         else:
@@ -64,7 +138,8 @@ class ContinuousActorCritic(nn.Module):
     min_scale: float = 1e-3
 
     @nn.compact
-    def __call__(self, x):
+    def __call__(self, obs, actions):
+        x = jnp.concatenate((obs, actions), axis=-1)
         embedding = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
         embedding = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(embedding))
 
@@ -169,21 +244,10 @@ class SimpleNetwork(nn.Module):
 
     @nn.compact
     def __call__(self, x):  # obs, actions):
-        if self.activation == "relu":
-            activation = nn.relu
-        else:
-            activation = nn.tanh
-
-        # if self.config.CNN:
-        #     obs = CNNtoLinear()(obs)
-
-        # obs = nn.Dense(self.agent_config.HIDDEN_SIZE - self.action_dim, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(obs)
-        # x = jnp.concatenate((obs, actions), axis=-1)
-
-        x = nn.Dense(self.agent_config.HIDDEN_SIZE, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
-        x = activation(x)
-        x = nn.Dense(self.agent_config.HIDDEN_SIZE, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
-        x = activation(x)
+        x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        # x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        # x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
         x = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(x)
 
         return jnp.squeeze(x, axis=-1)
