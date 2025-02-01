@@ -13,7 +13,7 @@ def get_config():
     # config.DISCRETE = True
 
     config.NUM_INNER_STEPS = 200#0  # ep rollout length
-    config.NUM_EPISODES = 5000  # number of ep rollouts to run
+    config.NUM_EPISODES = 5000  # 50000  # number of ep rollouts to run
     config.NUM_ENVS = 64  # 128
     config.NUM_DEVICES = 1
 
@@ -27,8 +27,8 @@ def get_config():
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
-    config.AGENT_TYPE = "DDPG"
-    # config.AGENT_TYPE = "PPO"
+    # config.AGENT_TYPE = "DDPG"
+    config.AGENT_TYPE = "PPO"
     # config.AGENT_TYPE = "SAC"
     # config.AGENT_TYPE = "ERSAC"
     # config.AGENT_TYPE = "BootDQN"

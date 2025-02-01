@@ -16,44 +16,29 @@ from .envs.wrappers import LogWrapper, FlattenObservationWrapper
 
 
 def run_train(config):
-    if config.CNN:
-        sys.exit()
-        # env = GymnaxToJaxMARL("DeepSea-bsuite", {"size": config.NUM_INNER_STEPS,  # TODO re-add deepsea
-        #                                          "sample_action_map": False})
-        # # check have updated the gymnax deep sea to the github change
-        # env_params = env.default_params
-        # utils = Utils_DEEPSEA(config)
+    if config.DISCRETE:
+        env, env_params = gymnax.make("CartPole-v1")
+        env = LogWrapper(env)
 
-        # env = bsuite.load_from_id(bsuite_id="deep_sea/1")
-        # env = BsuiteToMARL("deep_sea/1")
+        # env, env_params = gymnax.make("Acrobot-v1")
+        # env = LogWrapper(env)
+        #
+        env, env_params = gymnax.make("DeepSea-bsuite", size=config.DEEP_SEA_MAP, sample_action_map=True)
+        env = FlattenObservationWrapper(env)
+        env = LogWrapper(env)
 
+        # env, env_params = gymnax.make("MountainCar-v0")
+        # env = LogWrapper(env)
     else:
-        if config.DISCRETE:
-            env, env_params = gymnax.make("CartPole-v1")
-            env = LogWrapper(env)
-            utils = Utils_Cartpole(config)
+        env = KS_JAX() # TODO how to adjust default params for this step
+        env_params = env.default_params
+        env = LogWrapper(env)  # TODO does this work with the env?
 
-            # env, env_params = gymnax.make("Acrobot-v1")
-            # env = LogWrapper(env)
-            # utils = Utils_Cartpole(config)
-            #
-            env, env_params = gymnax.make("DeepSea-bsuite", size=config.DEEP_SEA_MAP, sample_action_map=True)
-            env = FlattenObservationWrapper(env)
-            env = LogWrapper(env)
-            # utils = Utils_Cartpole(config)
-
-            # env, env_params = gymnax.make("MountainCar-v0")
-            # env = LogWrapper(env)
-            # utils = Utils_Cartpole(config)
-        else:
-            env = KS_JAX() # TODO how to adjust default params for this step
-            env_params = env.default_params
-            env = LogWrapper(env)  # TODO does this work with the env?
-            # utils = Utils_KS(config)
-
-            # env, env_params = gymnax.make("MountainCarContinuous-v0")
-            # env = LogWrapper(env)
-            # utils = Utils_Cartpole(config)
+        env, env_params = gymnax.make("MountainCarContinuous-v0")
+        env = LogWrapper(env)
+        #
+        # env, env_params = gymnax.make("Swimmer-misc")
+        # env = LogWrapper(env)
 
     # key = jax.random.PRNGKey(config.SEED)
     #
@@ -125,6 +110,8 @@ def run_train(config):
                 # shape is LN, so we are averaging over the num_envs and episode
                 for item in agent_info:
                     metric_dict[f"{item}"] = agent_stats[item]
+
+                print(traj_batch.reward)
 
                 # print(traj_batch.info["reward"][traj_batch.info["returned_episode"]].mean())
 

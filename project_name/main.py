@@ -31,7 +31,8 @@ def main(_):
         mode=config.WANDB
     )
 
-    config.DEVICE = xla_bridge.get_backend().platform
+    config.DEVICE = jax.extend.backend.get_backend().platform
+    print(config.DEVICE)
 
     with jax.disable_jit(disable=config.DISABLE_JIT):
         train = jax.jit(run_train(config))

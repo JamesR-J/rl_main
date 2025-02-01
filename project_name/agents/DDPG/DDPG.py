@@ -5,7 +5,7 @@ import jax.random as jrandom
 from flax.training.train_state import TrainState
 from project_name.utils import MemoryState, flip_and_switch
 from project_name.agents import AgentBase
-from project_name.agents.DDPG import get_DDPG_config, ContinuousQNetwork, ScannedRNN, DeterministicPolicy
+from project_name.agents.DDPG import get_DDPG_config, ContinuousQNetwork, DeterministicPolicy
 import flashbax as fbx
 import optax
 from functools import partial
@@ -37,7 +37,7 @@ class DDPGAgent(AgentBase):
 
         self.action_dim = env.action_space().shape[0]  # TODO check this
 
-        self.critic_network = ContinuousQNetwork(config=config)  # TODO separate RNN and normal
+        self.critic_network = ContinuousQNetwork(config=config)
         self.actor_network = DeterministicPolicy(self.action_dim, env.action_space().low, env.action_space().high)
 
         key, _key = jrandom.split(key)
@@ -49,8 +49,6 @@ class DDPGAgent(AgentBase):
 
         self.critic_network_params = self.critic_network.init(_key, *init_x)
         self.actor_network_params = self.actor_network.init(_key, init_actor_x)
-
-        self.agent_config.NUM_MINIBATCHES = min(self.config.NUM_ENVS, self.agent_config.NUM_MINIBATCHES)
 
         self.buffer = fbx.make_flat_buffer(max_length=self.agent_config.BUFFER_SIZE,
                                            min_length=self.agent_config.BATCH_SIZE,
@@ -67,11 +65,6 @@ class DDPGAgent(AgentBase):
                                                    end_value=1e-6,
                                                    transition_steps=self.agent_config.EPS_DECAY * config.NUM_EPISODES,
                                                    )
-
-        def linear_schedule(count):  # TODO put this somewhere better
-            frac = (1.0 - (count // (
-                    self.agent_config.NUM_MINIBATCHES * self.agent_config.UPDATE_EPOCHS)) / config.NUM_EPISODES)
-            return self.agent_config.LR * frac
 
         self.ACTION_SCALE = (env.action_space().high - env.action_space().low) / 2
 
@@ -101,6 +94,8 @@ class DDPGAgent(AgentBase):
         action = train_state.actor_state.apply_fn(train_state.actor_state.params, ac_in[0]).mode()  # TODO no rnn for now
         key, _key = jrandom.split(key)
 
+        # TODO check action can go to the max and min, it seems to be stuck at -0.6 and 0.6 currently maybe
+
         # def callback(action, state):
         #     print(action)
         #     print(state)
@@ -115,11 +110,6 @@ class DDPGAgent(AgentBase):
 
         action = rlax.add_gaussian_noise(_key, action,
                                          self.ACTION_SCALE * exploration_noise).clip(self.env.action_space().low, self.env.action_space().high)
-
-        # def callback(action):
-        #     print(action)
-        #
-        # jax.experimental.io_callback(callback, None, exploration_noise)
 
         return mem_state, action, key
 
@@ -194,8 +184,8 @@ class DDPGAgent(AgentBase):
             rlax_loss = jax.vmap(rlax.dpg_loss, in_axes=(0, 0, None))(dpg_a_t_BA, dq_da_B1, dqda_clipping)
             rlax_loss = jnp.mean(rlax_loss)
 
-            return rlax_loss
-            # return loss_actor
+            # return rlax_loss
+            return loss_actor
 
         actor_loss, grads = jax.value_and_grad(policy_loss, argnums=1, has_aux=False)(new_critic_state.params,
                                                                                     train_state.actor_state.params,

@@ -5,22 +5,15 @@ def get_DDPG_config():
     config = config_dict.ConfigDict()
     config.LR_CRITIC = 0.001
     config.LR_ACTOR = 0.001
-    config.EPS = 1
-    config.GRU_HIDDEN_DIM = 16
-    config.GAE_LAMBDA = 0.95
-    config.NUM_MINIBATCHES = 4
 
     config.BUFFER_SIZE = 100000#0
     config.BATCH_SIZE = 32  # 128
-    config.EPS_DECAY = 0.6  # 0.1
+    config.EPS_DECAY = 0.9  # 1.1
 
-    config.UPDATE_EPOCHS = 4
-    config.TARGET_UPDATE_INTERVAL = 10
+    config.TARGET_UPDATE_INTERVAL = 1  # 10
     config.TAU = 0.001
     config.GAMMA = 0.99
 
     config.LEARNING_STARTS = 1000  # does this change depending on episodes?
-
-    config.EXPLORATION_NOISE = 0.1  # 0.2
 
     return config
