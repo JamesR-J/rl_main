@@ -23,6 +23,10 @@ def main(_):
 
     # TODO make rnn an option for all rather than diff agents, be cool if can still call agent PPO_RNN for example
 
+    # actor = Agent(env=env, env_params=env_params, config=config, utils=None, key=key)
+    #
+    # config.AGENT_CONFIG =
+
     wandb.init(project="RL_BASE",
         entity=config.WANDB_ENTITY,
         config=config,

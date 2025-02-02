@@ -61,6 +61,8 @@ def run_train(config):
         actor = Agent(env=env, env_params=env_params, config=config, utils=None, key=key)
         train_state, mem_state = actor.initialise()
 
+        new_config = actor.agent.config  # TODO why this causing errors?
+
         reset_key = jrandom.split(key, config.NUM_ENVS)
         init_obs_NO, env_state = jax.vmap(env.reset, in_axes=(0, None), axis_name="batch_axis")(reset_key, env_params)
 
@@ -94,24 +96,30 @@ def run_train(config):
                 return (train_state, mem_state, env_state, nobs_NO, ndone_N, key), transition
 
             ((train_state, mem_state, env_state, last_obs_NO, last_done_N, key),
-             trajectory_batch_LNZ) = jax.lax.scan(_run_episode_step, runner_state, None, config.NUM_INNER_STEPS)
+             trajectory_batch_LNZ) = jax.lax.scan(_run_episode_step, runner_state, None, actor.agent.agent_config.NUM_INNER_STEPS)
+            # TODO have changed the above too
 
             train_state, mem_state, agent_info, key = actor.update(train_state, mem_state,  last_obs_NO,  last_done_N,
                                                                    key, trajectory_batch_LNZ)
 
             def callback(traj_batch, env_stats, agent_stats, update_steps):
-                metric_dict = {"Total Steps": update_steps * config.NUM_ENVS * config.NUM_INNER_STEPS,
+                metric_dict = {"Total Steps": update_steps * config.NUM_ENVS * actor.agent.agent_config.NUM_INNER_STEPS,
                                "Total_Episodes": update_steps * config.NUM_ENVS,
-                               "avg_reward": traj_batch.reward.mean(),
+                               # "avg_reward": traj_batch.reward.mean(),
                                "avg_returns": traj_batch.info["returned_episode_returns"][traj_batch.info["returned_episode"]].mean(),
                                "avg_episode_end_reward": traj_batch.info["reward"][traj_batch.info["returned_episode"]].mean(),
+                               "avg_episode_length": traj_batch.info["returned_episode_lengths"][traj_batch.info["returned_episode"]].mean(),
                                "avg_action": traj_batch.action.mean()}
+                # TODO have changed the num_inner_steps above
 
                 # shape is LN, so we are averaging over the num_envs and episode
                 for item in agent_info:
                     metric_dict[f"{item}"] = agent_stats[item]
 
-                print(traj_batch.reward)
+                # print(traj_batch.reward.shape)
+                # print(traj_batch.reward.mean())
+                # print(traj_batch.info["reward"][traj_batch.info["returned_episode"]])
+                # print("NEW ONE")
 
                 # print(traj_batch.info["reward"][traj_batch.info["returned_episode"]].mean())
 
@@ -128,7 +136,8 @@ def run_train(config):
 
             return ((train_state, mem_state, env_state, last_obs_NO, last_done_N, key), update_steps), None
 
-        runner_state, _ = jax.lax.scan(_run_inner_update,(runner_state, 0),None, config.NUM_EPISODES)
+        runner_state, _ = jax.lax.scan(_run_inner_update,(runner_state, 0),None, new_config.NUM_EPISODES)
+        # TODO have changed the above
 
         return {"runner_state": runner_state}
 

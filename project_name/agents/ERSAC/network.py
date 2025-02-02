@@ -32,10 +32,10 @@ class DiscreteQNetwork(nn.Module):
         x = nn.LayerNorm()(x)
         x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
         x = nn.LayerNorm()(x)
-        # x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
-        # x = nn.LayerNorm()(x)
-        # x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
-        # x = nn.LayerNorm()(x)
+        x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        x = nn.LayerNorm()(x)
+        x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        x = nn.LayerNorm()(x)
         q_vals = nn.Dense(1, kernel_init=orthogonal(1.0))(x)
 
         return jnp.squeeze(q_vals, axis=-1)
@@ -50,10 +50,10 @@ class ContinuousQNetwork(nn.Module):
         x = nn.LayerNorm()(x)
         x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
         x = nn.LayerNorm()(x)
-        # x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
-        # x = nn.LayerNorm()(x)
-        # x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
-        # x = nn.LayerNorm()(x)
+        x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        x = nn.LayerNorm()(x)
+        x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        x = nn.LayerNorm()(x)
         q_vals = nn.Dense(1, kernel_init=orthogonal(1.0))(x)
 
         return jnp.squeeze(q_vals, axis=-1)
@@ -84,8 +84,8 @@ class ContinuousActor(nn.Module):
     def __call__(self, x):
         x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
         x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
-        # x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
-        # x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
 
         action_mean = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01))(x)
         action_logstd = jax.nn.softplus(nn.Dense(self.action_dim, kernel_init=orthogonal(0.01))(x)) + self.min_scale

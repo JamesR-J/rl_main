@@ -8,8 +8,6 @@ from jax import lax
 from typing import Optional
 import jax
 
-jax.config.update("jax_enable_x64", True)  # TODO unsure if need or not but will check results
-
 
 """
 E - Episodes
@@ -42,6 +40,7 @@ class EnvParams(environment.EnvParams):  # TODO sort this out at some point to m
 
 class KS_JAX(environment.Environment[EnvState, EnvParams]):
     def __init__(self):
+        # TODO add some check that it is in x64 enabled
         self.params = EnvParams()
         N = self.params.x.size
         self.dt = self.params.dt

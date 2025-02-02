@@ -12,8 +12,14 @@ def get_config():
     config.DISCRETE = False
     # config.DISCRETE = True
 
-    config.NUM_INNER_STEPS = 200#0  # ep rollout length
-    config.NUM_EPISODES = 5000  # 50000  # number of ep rollouts to run
+    # config.NUM_INNER_STEPS = 1  # 200#0  # ep rollout length
+    # config.NUM_EPISODES = 200000  # 2000  # 5000  # 50000  # number of ep rollouts to run
+
+    config.TOTAL_TIMESTEPS = 25000000
+    # TODO add in the above and then each agent has a num_inner_steps to figure out num_episodes, this needs to be
+    # apparent in the agent itself as well as the overall training loop outside
+    # perhaps by
+
     config.NUM_ENVS = 64  # 128
     config.NUM_DEVICES = 1
 
@@ -27,12 +33,14 @@ def get_config():
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
-    # config.AGENT_TYPE = "DDPG"
-    config.AGENT_TYPE = "PPO"
+    config.AGENT_TYPE = "DDPG"
+    # config.AGENT_TYPE = "PPO"
     # config.AGENT_TYPE = "SAC"
     # config.AGENT_TYPE = "ERSAC"
     # config.AGENT_TYPE = "BootDQN"
     # config.AGENT_TYPE = "DQN"
+
+    config.AGENT_CONFIG = {}
 
     return config
 
