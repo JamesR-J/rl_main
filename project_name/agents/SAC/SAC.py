@@ -35,6 +35,8 @@ class SACAgent(AgentBase):
         self.env_params = env_params
         self.utils = utils
 
+        self.config.NUM_EPISODES = self.config.TOTAL_TIMESTEPS // (self.agent_config.NUM_INNER_STEPS * self.config.NUM_ENVS)
+
         key, actor_key, critic_key = jrandom.split(key, 3)
 
         if self.config.DISCRETE:
@@ -72,22 +74,21 @@ class SACAgent(AgentBase):
         self.ACTION_SCALE = (env.action_space(env_params).high - env.action_space(env_params).low) / 2.0
         self.ACTION_BIAS =(env.action_space(env_params).high + env.action_space(env_params).low) / 2.0
 
-        self.target_entropy = -env.action_space(env_params).shape[0]
+        self.target_entropy = -env.action_space(env_params).shape[0] * self.agent_config.TARGET_ENTROPY_SCALE
 
-        self.alpha_optimiser = optax.adam(self.agent_config.ALPHA_LR)
+        self.alpha_optimiser = optax.chain(optax.clip_by_global_norm(self.agent_config.MAX_GRAD_NORM), optax.adam(self.agent_config.ALPHA_LR, eps=1e-5))
 
     def create_train_state(self):
-        log_alpha=jnp.asarray(jnp.log(self.agent_config.INIT_ALPHA), dtype=jnp.float32)
+        log_alpha=jnp.zeros_like(self.target_entropy)
+        actor_optim = optax.chain(optax.clip_by_global_norm(self.agent_config.MAX_GRAD_NORM), optax.adam(self.agent_config.LR_ACTOR, eps=1e-5))
+        q_optim = optax.chain(optax.clip_by_global_norm(self.agent_config.MAX_GRAD_NORM), optax.adam(self.agent_config.LR_CRITIC, eps=1e-5))
         return (TrainStateSAC(critic_state=TrainStateExt.create(apply_fn=self.critic_network.apply,
                                                params=self.critic_params,
                                                target_params=self.critic_params,
-                                               tx=optax.chain(
-                                                   optax.inject_hyperparams(optax.adam)(self.agent_config.LR, eps=1e-4)),
-                                               ),
+                                               tx=q_optim),
                               actor_state=TrainState.create(apply_fn=self.actor_network.apply,
                                         params=self.actor_params,
-                                        tx=optax.chain(optax.inject_hyperparams(optax.adam)(self.agent_config.LR, eps=1e-4)),
-                                        ),
+                                        tx=actor_optim),
                               log_alpha=log_alpha,
                               alpha_opt_state=self.alpha_optimiser.init(log_alpha)),
                 self.buffer.init(
@@ -128,7 +129,7 @@ class SACAgent(AgentBase):
         log_alpha = train_state.log_alpha
         alpha = jnp.exp(log_alpha)
 
-        def critic_loss(critic_target_params, critic_params, actor_params, batch, key):
+        def critic_loss(critic_target_params, critic_params, actor_params, alpha, batch, key):
             obs_BO = batch.experience.first.obs
             action_BA = batch.experience.first.action
             reward_B = batch.experience.first.reward
@@ -151,22 +152,23 @@ class SACAgent(AgentBase):
             def mse_loss(preds, targets):
                 return 0.5 * jnp.mean(jnp.square(preds - targets))
 
-            qf_loss = jax.vmap(mse_loss, in_axes=(1, 1))(qf_values_B2,
-                                                         jnp.repeat(next_q_value_B[..., None], 2, axis=-1))
+            qf_loss = jax.vmap(mse_loss, in_axes=(1, None))(qf_values_B2, next_q_value_B)
+            # TODO check the above is right dimensions
 
             return jnp.sum(qf_loss)
 
-        critic_loss, grads = jax.value_and_grad(critic_loss, argnums=1, has_aux=False)(
+        critic_loss, q_grads = jax.value_and_grad(critic_loss, argnums=1, has_aux=False)(
             train_state.critic_state.target_params,
             train_state.critic_state.params,
             train_state.actor_state.params,
+            alpha,
             batch,
             key
         )
 
-        new_critic_state = train_state.critic_state.apply_gradients(grads=grads)
+        new_critic_state = train_state.critic_state.apply_gradients(grads=q_grads)
 
-        def actor_loss(critic_params, actor_params, batch, key):
+        def actor_loss(critic_params, actor_params, alpha, batch, key):
             obs_BO = batch.experience.first.obs
 
             pi = train_state.actor_state.apply_fn(actor_params, obs_BO)
@@ -177,14 +179,14 @@ class SACAgent(AgentBase):
             min_qf_values_B2 = train_state.critic_state.apply_fn(critic_params, obs_BO, action_BA)
             min_qf_values_B = jnp.min(min_qf_values_B2, axis=-1)
 
-            return jnp.mean(((alpha * log_prob_B) - min_qf_values_B))
+            return jnp.mean(alpha * log_prob_B - min_qf_values_B)
 
-        actor_loss, grads = jax.value_and_grad(actor_loss, argnums=1)(train_state.critic_state.params,
-                                                           train_state.actor_state.params,
-                                                           batch,
-                                                           key
-                                                           )
-        new_actor_state = train_state.actor_state.apply_gradients(grads=grads)
+        actor_loss, a_grads = jax.value_and_grad(actor_loss, argnums=1)(train_state.critic_state.params,
+                                                                        train_state.actor_state.params,
+                                                                        alpha,
+                                                                        batch,
+                                                                        key)
+        new_actor_state = train_state.actor_state.apply_gradients(grads=a_grads)
 
         def alpha_loss(log_alpha, actor_params, batch, key):
             obs_BO = batch.experience.first.obs
@@ -198,12 +200,12 @@ class SACAgent(AgentBase):
 
             return jnp.mean(alpha_loss)
 
-        alpha_loss, grads = jax.value_and_grad(alpha_loss, argnums=0)(train_state.log_alpha,
+        alpha_loss, alpha_grads = jax.value_and_grad(alpha_loss, argnums=0)(train_state.log_alpha,
                                                                       train_state.actor_state.params,
                                                                       batch,
                                                                       key)
 
-        alpha_updates, new_alpha_opt_state = self.alpha_optimiser.update(grads, train_state.alpha_opt_state)
+        alpha_updates, new_alpha_opt_state = self.alpha_optimiser.update(alpha_grads, train_state.alpha_opt_state)
         new_log_alpha = optax.apply_updates(train_state.log_alpha, alpha_updates)
         alpha = jnp.exp(new_log_alpha)
 

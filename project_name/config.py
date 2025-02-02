@@ -33,9 +33,9 @@ def get_config():
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
-    config.AGENT_TYPE = "DDPG"
+    # config.AGENT_TYPE = "DDPG"
     # config.AGENT_TYPE = "PPO"
-    # config.AGENT_TYPE = "SAC"
+    config.AGENT_TYPE = "SAC"
     # config.AGENT_TYPE = "ERSAC"
     # config.AGENT_TYPE = "BootDQN"
     # config.AGENT_TYPE = "DQN"
