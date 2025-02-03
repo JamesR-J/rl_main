@@ -15,7 +15,7 @@ def get_config():
     # config.NUM_INNER_STEPS = 1  # 200#0  # ep rollout length
     # config.NUM_EPISODES = 200000  # 2000  # 5000  # 50000  # number of ep rollouts to run
 
-    config.TOTAL_TIMESTEPS = 25000000
+    config.TOTAL_TIMESTEPS = 250#00000
     # TODO add in the above and then each agent has a num_inner_steps to figure out num_episodes, this needs to be
     # apparent in the agent itself as well as the overall training loop outside
     # perhaps by

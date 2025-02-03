@@ -45,7 +45,8 @@ class ContinuousQNetwork(nn.Module):
 
     @nn.compact
     def __call__(self, s, a):
-        x = jnp.concatenate((s, a), axis=-1)
+        # x = jnp.concatenate((s, a), axis=-1)
+        x = s
         x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
         x = nn.LayerNorm()(x)
         x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))

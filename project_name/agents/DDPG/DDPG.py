@@ -45,10 +45,10 @@ class DDPGAgent(AgentBase):
 
         key, _key = jrandom.split(key)
 
-        init_x = (jnp.zeros((1, config.NUM_ENVS, *env.observation_space(env_params).shape)),
-                 (jnp.zeros((1, config.NUM_ENVS, self.action_dim))))
+        init_x = (jnp.zeros((1, *env.observation_space(env_params).shape)),
+                 (jnp.zeros((1, self.action_dim))))
 
-        init_actor_x = jnp.zeros((1, config.NUM_ENVS, *env.observation_space(env_params).shape))
+        init_actor_x = jnp.zeros((1, *env.observation_space(env_params).shape))
 
         self.critic_network_params = self.critic_network.init(_key, *init_x)
         self.actor_network_params = self.actor_network.init(_key, init_actor_x)

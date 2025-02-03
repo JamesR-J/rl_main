@@ -79,7 +79,7 @@ class ERSACAgent(AgentBase):
                                                           jnp.zeros((1, config.NUM_ENVS, self.action_dim))
                                                           )
             self.rp_network = ContinuousEnsembleNetwork(self.action_dim, config=config, agent_config=self.agent_config)
-            self.rp_init_x = jnp.zeros((1, self.config.NUM_ENVS, self.action_dim))
+            self.rp_init_x = jnp.zeros((1, config.NUM_ENVS, self.action_dim))
 
         self.actor_params = self.actor_network.init(actor_key,
                                                     jnp.zeros((1, config.NUM_ENVS,
@@ -153,34 +153,29 @@ class ERSACAgent(AgentBase):
 
     @partial(jax.jit, static_argnums=(0,))
     def act(self, train_state: TrainStateERSAC, mem_state: Any, ac_in: Any, key: Any):  # TODO better implement checks
-        pi = train_state.actor_state.apply_fn(train_state.actor_state.params, ac_in[0])
+        obs = jnp.expand_dims(ac_in[0], 0)
+        pi = train_state.actor_state.apply_fn(train_state.actor_state.params, obs)
         key, _key = jrandom.split(key)
         action_NA = pi.sample(seed=_key)
 
-        print(pi.logits)
-        print(distrax.importance_sampling_ratios())
-        sys.exit()
-
-        # action = jnp.ones_like(action)  # TODO for testing randomized actions
-
-        return mem_state, action_NA, key
+        return mem_state, jnp.squeeze(action_NA, axis=0), key  # TODO updating action dims is this okay idk?
 
     @partial(jax.jit, static_argnums=(0,))
     def _get_reward_noise(self, ens_state: TrainStateRP, batch, key) -> chex.Array:
-        def single_reward_noise(ens_state: TrainStateRP, obs_BSO: chex.Array, action_BSA: chex.Array) -> chex.Array:
-            rew_pred_BS1 = ens_state.apply_fn({"params": {"_net": ens_state.params,
+        def single_reward_noise(ens_state: TrainStateRP, obs_SBO: chex.Array, action_SBA: chex.Array) -> chex.Array:
+            rew_pred_SB1 = ens_state.apply_fn({"params": {"_net": ens_state.params,
                                                       "_prior_net": ens_state.static_prior_params}},
-                                          obs_BSO, action_BSA)  # TODO needs a 1 if only 1 dimensional action
-            return rew_pred_BS1
+                                          obs_SBO, action_SBA)  # TODO needs a 1 if only 1 dimensional action
+            return rew_pred_SB1
 
-        obs_BSO = batch.experience.obs
-        actions_BSA = batch.experience.action
+        obs_SBO = batch.experience.obs
+        actions_SBA = batch.experience.action
 
-        ensembled_reward_UBS = jax.vmap(single_reward_noise, in_axes=(0, None, None))(ens_state, obs_BSO, actions_BSA)
+        ensembled_reward_USB = jax.vmap(single_reward_noise, in_axes=(0, None, None))(ens_state, obs_SBO, actions_SBA)
 
-        ensembled_reward_BS = self.agent_config.UNCERTAINTY_SCALE * jnp.var(ensembled_reward_UBS, axis=0)
+        ensembled_reward_SB = self.agent_config.UNCERTAINTY_SCALE * jnp.var(ensembled_reward_USB, axis=0)
 
-        return ensembled_reward_BS
+        return ensembled_reward_SB
 
     @partial(jax.jit, static_argnums=(0,))
     def update(self, runner_state, agent, traj_batch_LNZ, unused_2):
@@ -190,6 +185,10 @@ class ERSACAgent(AgentBase):
         mask_LNU = jrandom.binomial(_key, 1, self.agent_config.MASK_PROB,
                                     (*traj_batch_LNZ[0].shape, self.agent_config.NUM_ENSEMBLE))
         noise_LNU = jrandom.normal(_key, (*traj_batch_LNZ[0].shape, self.agent_config.NUM_ENSEMBLE))
+
+        # TODO below only works if BS = NL, should add a check for this tbh
+        target_pi = train_state.actor_state.apply_fn(train_state.actor_state.params, traj_batch_LNZ.obs)
+        sampling_log_prob = target_pi.log_prob(traj_batch_LNZ.action)
 
         mem_state = self.buffer.add(mem_state, TransitionERSAC(done=flip_and_switch(traj_batch_LNZ.done),
                                                                action=flip_and_switch(traj_batch_LNZ.action),
@@ -202,127 +201,148 @@ class ERSACAgent(AgentBase):
 
         key, _key = jrandom.split(key)
         batch_BSZ = self.buffer.sample(mem_state, _key)
+        batch_SBZ = jax.tree_map(lambda x: jnp.swapaxes(x, 0, 1), batch_BSZ)
 
-        # obs_LP1NO = jnp.concatenate((traj_batch_LNZ.obs, jnp.zeros((1, *traj_batch_LNZ.obs.shape[1:]))), axis=0)
+        state_action_reward_noise_SB = self._get_reward_noise(train_state.ens_state, batch_SBZ, key)
 
-        state_action_reward_noise_BS = self._get_reward_noise(train_state.ens_state, batch_BSZ, key)
-
-        def critic_loss(critic_params, actor_params, tau_params, state_action_reward_noise_BS, batch_BSZ):
+        def critic_loss(critic_params, actor_params, tau_params, state_action_reward_noise_SB, batch_SBZ, sampling_log_prob_SB):
             tau = jnp.exp(tau_params)
 
-            obs_BSO = batch_BSZ.experience.obs
-            action_BSA = batch_BSZ.experience.action
-            reward_BS = batch_BSZ.experience.reward.astype(jnp.float32)  # TODO some dodgy dtype need to sort out
-            done_BS = batch_BSZ.experience.done
+            obs_SBO = batch_SBZ.experience.obs
+            action_SBA = batch_SBZ.experience.action
+            reward_SB = batch_SBZ.experience.reward.astype(jnp.float32)  # TODO some dodgy dtype need to sort out
+            done_SB = batch_SBZ.experience.done
 
-            values_BS = train_state.critic_state.apply_fn(critic_params, obs_BSO, action_BSA)
-            pi = train_state.actor_state.apply_fn(actor_params, obs_BSO)
+            values_SB = train_state.critic_state.apply_fn(critic_params, obs_SBO, action_SBA)
+            pi = train_state.actor_state.apply_fn(actor_params, obs_SBO)
 
-            log_prob_BS = pi.log_prob(action_BSA)
+            target_log_prob_SB = pi.log_prob(action_SBA)
+            importance_sampling_ratios = jnp.exp(target_log_prob_SB - sampling_log_prob_SB)
 
-            td_lambda = jax.vmap(rlax.td_lambda, in_axes=(0, 0, 0, 0, None))
-            k_estimate_LN = td_lambda(values_BS[:, :-1],
-                                      reward_BS[:, :-1] + (state_action_reward_noise_BS[:, :-1] / (2 * tau)),
-                                      (1 - done_BS[:, :-1]) * self.agent_config.GAMMA,
-                                      values_BS[:, 1:],
-                                      self.agent_config.TD_LAMBDA,
-                                      )
+            vtrace = jax.vmap(rlax.vtrace, in_axes=1, out_axes=1)
+            k_estimate_SM1NN = vtrace(values_SB[:-1, :],
+                                   values_SB[1:, :],
+                                   reward_SB[:-1, :] + (state_action_reward_noise_SB[:-1, :] / (2 * tau)),
+                                   (1 - done_SB[:-1, :]) * self.agent_config.GAMMA,
+                                   importance_sampling_ratios[:-1, :]
+                                   )
 
-            value_loss = jnp.square(values_BS[:, :-1] - jax.lax.stop_gradient(k_estimate_LN - tau * log_prob_BS[:, :-1]))
+            # td_lambda = jax.vmap(rlax.td_lambda, in_axes=(0, 0, 0, 0, None))
+            # k_estimate_LN = td_lambda(values_BS[:, :-1],
+            #                           reward_BS[:, :-1] + (state_action_reward_noise_BS[:, :-1] / (2 * tau)),
+            #                           (1 - done_BS[:, :-1]) * self.agent_config.GAMMA,
+            #                           values_BS[:, 1:],
+            #                           self.agent_config.TD_LAMBDA,
+            #                           )
+
+            value_loss = jnp.square(values_SB[:-1, :] - jax.lax.stop_gradient(k_estimate_SM1NN - tau * target_log_prob_SB[:-1, :]))
 
             return jnp.mean(value_loss)
 
         value_loss, grads = jax.value_and_grad(critic_loss, has_aux=False, argnums=0)(train_state.critic_state.params,
                                                                                       train_state.actor_state.params,
                                                                                       train_state.log_tau,
-                                                                                      state_action_reward_noise_BS,
-                                                                                      batch_BSZ)
+                                                                                      state_action_reward_noise_SB,
+                                                                                      batch_SBZ,
+                                                                                      sampling_log_prob)
         new_critic_state = train_state.critic_state.apply_gradients(grads=grads)
 
-        def actor_loss(critic_params, actor_params, tau_params, state_action_reward_noise_BS, batch_BSZ, key):
+        def actor_loss(critic_params, actor_params, tau_params, state_action_reward_noise_SB, batch_SBZ, sampling_log_prob_SB, key):
             tau = jnp.exp(tau_params)
 
-            obs_BSO = batch_BSZ.experience.obs
-            action_BSA = batch_BSZ.experience.action
-            reward_BS = batch_BSZ.experience.reward.astype(jnp.float32)  # TODO some dodgy dtype need to sort out
-            done_BS = batch_BSZ.experience.done
+            obs_SBO = batch_SBZ.experience.obs
+            action_SBA = batch_SBZ.experience.action
+            reward_SB = batch_SBZ.experience.reward.astype(jnp.float32)  # TODO some dodgy dtype need to sort out
+            done_SB = batch_SBZ.experience.done
 
-            values_BS = train_state.critic_state.apply_fn(critic_params, obs_BSO, action_BSA)
-            pi = train_state.actor_state.apply_fn(actor_params, obs_BSO)
+            values_SB = train_state.critic_state.apply_fn(critic_params, obs_SBO, action_SBA)
+            pi = train_state.actor_state.apply_fn(actor_params, obs_SBO)
 
-            log_prob_BS = pi.log_prob(action_BSA)
+            target_log_prob_SB = pi.log_prob(action_SBA)
+            importance_sampling_ratios = jnp.exp(target_log_prob_SB - sampling_log_prob_SB)
 
-            td_lambda = jax.vmap(rlax.td_lambda, in_axes=(0, 0, 0, 0, None))
-            k_estimate_LN = td_lambda(values_BS[:, :-1],
-                                      reward_BS[:, :-1] + (state_action_reward_noise_BS[:, :-1] / (2 * tau)),
-                                      (1 - done_BS[:, :-1]) * self.agent_config.GAMMA,
-                                      values_BS[:, 1:],
-                                      self.agent_config.TD_LAMBDA,
+            vtrace = jax.vmap(rlax.vtrace, in_axes=1, out_axes=1)
+            k_estimate_SM1NN = vtrace(values_SB[:-1, :],
+                                      values_SB[1:, :],
+                                      reward_SB[:-1, :] + (state_action_reward_noise_SB[:-1, :] / (2 * tau)),
+                                      (1 - done_SB[:-1, :]) * self.agent_config.GAMMA,
+                                      importance_sampling_ratios[:-1, :]
                                       )
 
+            # log_prob_BS = pi.log_prob(action_BSA)
+            #
+            # td_lambda = jax.vmap(rlax.td_lambda, in_axes=(0, 0, 0, 0, None))
+            # k_estimate_LN = td_lambda(values_BS[:, :-1],
+            #                           reward_BS[:, :-1] + (state_action_reward_noise_BS[:, :-1] / (2 * tau)),
+            #                           (1 - done_BS[:, :-1]) * self.agent_config.GAMMA,
+            #                           values_BS[:, 1:],
+            #                           self.agent_config.TD_LAMBDA,
+            #                           )
+
             key, _key = jrandom.split(key)
-            entropy_BS = pi.entropy(seed=_key)  # TODO think have sorted this by changing the Categorical module to have entropy
+            entropy_SB = pi.entropy(seed=_key)  # TODO think have sorted this by changing the Categorical module to have entropy
 
-            policy_loss = log_prob_BS[:, :-1] * jax.lax.stop_gradient(k_estimate_LN - values_BS[:, :-1]) + tau * entropy_BS[:, :-1]
+            policy_loss = target_log_prob_SB[:-1, :] * jax.lax.stop_gradient(k_estimate_SM1NN - values_SB[:-1, :]) + tau * entropy_SB[:-1, :]
 
-            return -jnp.mean(policy_loss), entropy_BS
+            return -jnp.mean(policy_loss), entropy_SB
 
-        (policy_loss, entropy_BS), grads = jax.value_and_grad(actor_loss, has_aux=True, argnums=1)(new_critic_state.params,
+        (policy_loss, entropy_SB), grads = jax.value_and_grad(actor_loss, has_aux=True, argnums=1)(new_critic_state.params,
                                                                                                     train_state.actor_state.params,
                                                                                                     train_state.log_tau,
-                                                                                                    state_action_reward_noise_BS,
-                                                                                                    batch_BSZ,
+                                                                                                    state_action_reward_noise_SB,
+                                                                                                    batch_SBZ,
+                                                                                                    sampling_log_prob,
                                                                                                     key)
         new_actor_state = train_state.actor_state.apply_gradients(grads=grads)
 
-        def tau_loss(tau_params, entropy_BS, state_action_reward_noise_BS):
+        def tau_loss(tau_params, entropy_SB, state_action_reward_noise_SB):
             tau = jnp.exp(tau_params)
 
-            tau_loss = state_action_reward_noise_BS / (2 * tau) + (tau * entropy_BS)
+            tau_loss = state_action_reward_noise_SB / (2 * tau) + (tau * entropy_SB)
 
             return jnp.mean(tau_loss)
 
         tau_loss_val, tau_grads = jax.value_and_grad(tau_loss, has_aux=False, argnums=0)(train_state.log_tau,
-                                                                                         entropy_BS,
-                                                                                         state_action_reward_noise_BS)
+                                                                                         entropy_SB,
+                                                                                         state_action_reward_noise_SB)
         tau_updates, new_tau_opt_state = self.tau_optimiser.update(tau_grads, train_state.tau_opt_state)
         new_tau_params = optax.apply_updates(train_state.log_tau, tau_updates)
         train_state = train_state._replace(critic_state=new_critic_state,
                                            actor_state=new_actor_state,
                                            log_tau=new_tau_params, tau_opt_state=new_tau_opt_state)
 
-        def train_ensemble(ens_state: TrainStateRP, noise_BS, mask_BS, batch_BSZ):
-            def reward_predictor_loss(rp_params, prior_params, noise_BS, mask_BS, batch_BSZ):
-                obs_BSO = batch_BSZ.experience.obs
-                action_BSA = batch_BSZ.experience.action
-                reward_BS = batch_BSZ.experience.reward.astype(jnp.float32)  # TODO some dodgy dtype need to sort out
+        def train_ensemble(ens_state: TrainStateRP, noise_SB, mask_SB, batch_SBZ):
+            def reward_predictor_loss(rp_params, prior_params, noise_SB, mask_SB, batch_SBZ):
+                obs_SBO = batch_SBZ.experience.obs
+                action_SBA = batch_SBZ.experience.action
+                reward_SB = batch_SBZ.experience.reward.astype(jnp.float32)  # TODO some dodgy dtype need to sort out
 
-                rew_pred_BS = ens_state.apply_fn({"params": {"_net": rp_params, "_prior_net": prior_params}}, obs_BSO, action_BSA)
-                rew_pred_BS += self.agent_config.REWARD_NOISE_SCALE * noise_BS
-                return 0.5 * jnp.mean(mask_BS * jnp.square(rew_pred_BS - reward_BS)), rew_pred_BS
+                rew_pred_SB = ens_state.apply_fn({"params": {"_net": rp_params, "_prior_net": prior_params}}, obs_SBO, action_SBA)
+                rew_pred_SB += self.agent_config.REWARD_NOISE_SCALE * noise_SB
+                return 0.5 * jnp.mean(mask_SB * jnp.square(rew_pred_SB - reward_SB)), rew_pred_SB
                 # return jnp.mean(jnp.zeros((2))), rew_pred
 
             (ensemble_loss, rew_pred), grads = jax.value_and_grad(reward_predictor_loss, argnums=0, has_aux=True)(ens_state.params,
                                                                                                                   ens_state.static_prior_params,
-                                                                                                                  noise_BS,
-                                                                                                                  mask_BS,
-                                                                                                                  batch_BSZ)
+                                                                                                                  noise_SB,
+                                                                                                                  mask_SB,
+                                                                                                                  batch_SBZ)
             ens_state = ens_state.apply_gradients(grads=grads)
 
             return ensemble_loss, ens_state, rew_pred
 
-        ind_noise_UBS = jnp.moveaxis(batch_BSZ.experience.noise, [-3, -2, -1], [-2, -1, -3])
-        ind_mask_UBS = jnp.moveaxis(batch_BSZ.experience.mask, [-3, -2, -1], [-2, -1, -3])
+        ind_noise_USB = jnp.moveaxis(batch_SBZ.experience.noise, [-3, -2, -1], [-2, -1, -3])
+        ind_mask_USB = jnp.moveaxis(batch_SBZ.experience.mask, [-3, -2, -1], [-2, -1, -3])
 
         ensembled_loss, ens_state, rew_pred = jax.vmap(train_ensemble, in_axes=(0, 0, 0, None))(train_state.ens_state,
-                                                                       ind_noise_UBS,
-                                                                       ind_mask_UBS,
-                                                                       batch_BSZ)
+                                                                       ind_noise_USB,
+                                                                       ind_mask_USB,
+                                                                       batch_SBZ)
         train_state = train_state._replace(ens_state=ens_state)
 
         info = {"value_loss": jnp.mean(value_loss),
                 "policy_loss": jnp.mean(policy_loss),
-                "entropy": jnp.mean(entropy_BS),
+                "entropy": jnp.mean(entropy_SB),
                 "tau_loss": tau_loss_val,
                 "avg_ensemble_loss": jnp.mean(ensembled_loss),
                 "tau": jnp.exp(new_tau_params),

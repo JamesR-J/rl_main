@@ -41,7 +41,11 @@ def main(_):
     with jax.disable_jit(disable=config.DISABLE_JIT):
         train = jax.jit(run_train(config))
         out = jax.block_until_ready(train())  # .block_until_ready()
-        jax.profiler.save_device_memory_profile("memory.prof")
+        # jax.profiler.save_device_memory_profile("memory.prof")
+        train_state = out["runner_state"][0][0]
+        critic_params = train_state.critic_state.params
+        jax.numpy.save("project_name/ersac_critic_params.npy", critic_params)
+
 
     print("FINITO")
 

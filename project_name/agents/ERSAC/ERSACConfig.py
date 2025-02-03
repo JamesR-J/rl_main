@@ -4,7 +4,7 @@ from ml_collections import config_dict
 def get_ERSAC_config():
     config = config_dict.ConfigDict()
 
-    config.NUM_INNER_STEPS = 64
+    config.NUM_INNER_STEPS = 128
 
     config.PRIOR_SCALE = 1.0  # 5.0  # 0.5
     config.LR = 0.0003
@@ -28,6 +28,6 @@ def get_ERSAC_config():
     # config.EPS_FINISH = 0.05
     # config.EPS_DECAY = 0.1
 
-    config.SAMPLE_SEQ_LENGTH = 64  # 128  # TODO should this be same size as the ep rollouts?
+    config.SAMPLE_SEQ_LENGTH = 128  # TODO should this be same size as the ep rollouts?
 
     return config
