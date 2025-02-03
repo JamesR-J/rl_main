@@ -34,8 +34,8 @@ def run_train(config):
         env_params = env.default_params
         env = LogWrapper(env)  # TODO does this work with the env?
 
-        env, env_params = gymnax.make("MountainCarContinuous-v0")
-        env = LogWrapper(env)
+        # env, env_params = gymnax.make("MountainCarContinuous-v0")
+        # env = LogWrapper(env)
         #
         # env, env_params = gymnax.make("Swimmer-misc")
         # env = LogWrapper(env)
@@ -103,11 +103,12 @@ def run_train(config):
                                                                    key, trajectory_batch_LNZ)
 
             def callback(traj_batch, env_stats, agent_stats, update_steps):
+                avg_episode_end_reward = traj_batch.info["reward"][traj_batch.info["returned_episode"]].mean()
                 metric_dict = {"Total Steps": update_steps * config.NUM_ENVS * actor.agent.agent_config.NUM_INNER_STEPS,
                                "Total_Episodes": update_steps * config.NUM_ENVS,
                                # "avg_reward": traj_batch.reward.mean(),
                                "avg_returns": traj_batch.info["returned_episode_returns"][traj_batch.info["returned_episode"]].mean(),
-                               "avg_episode_end_reward": traj_batch.info["reward"][traj_batch.info["returned_episode"]].mean(),
+                               "avg_episode_end_reward": jnp.where(jnp.isnan(avg_episode_end_reward), -100.0, avg_episode_end_reward),
                                "avg_episode_length": traj_batch.info["returned_episode_lengths"][traj_batch.info["returned_episode"]].mean(),
                                "avg_action": traj_batch.action.mean()}
                 # TODO have changed the num_inner_steps above

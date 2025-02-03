@@ -51,6 +51,8 @@ class ERSACAgent(AgentBase):
         self.env_params = env_params
         self.utils = utils
 
+        self.config.NUM_EPISODES = self.config.TOTAL_TIMESTEPS // (self.agent_config.NUM_INNER_STEPS * self.config.NUM_ENVS)
+
         key, actor_key, critic_key = jrandom.split(key, 3)
 
         if self.config.DISCRETE:
@@ -154,6 +156,10 @@ class ERSACAgent(AgentBase):
         pi = train_state.actor_state.apply_fn(train_state.actor_state.params, ac_in[0])
         key, _key = jrandom.split(key)
         action_NA = pi.sample(seed=_key)
+
+        print(pi.logits)
+        print(distrax.importance_sampling_ratios())
+        sys.exit()
 
         # action = jnp.ones_like(action)  # TODO for testing randomized actions
 

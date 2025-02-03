@@ -22,6 +22,9 @@ class PPOAgent(AgentBase):
         self.agent_config = get_PPO_config()
         self.env = env
         self.env_params = env_params
+        self.utils = utils
+
+        self.config.NUM_EPISODES = self.config.TOTAL_TIMESTEPS // (self.agent_config.NUM_INNER_STEPS * self.config.NUM_ENVS)
 
         if self.config.DISCRETE:
             self.action_choices = env.action_space().n

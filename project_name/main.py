@@ -7,7 +7,7 @@ from jax.lib import xla_bridge
 import jax.profiler
 
 
-jax.config.update("jax_enable_x64", False)  # TODO unsure if need or not but will check results
+jax.config.update("jax_enable_x64", True)  # TODO unsure if need or not but will check results
 
 
 def main(_):

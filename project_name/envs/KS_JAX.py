@@ -103,10 +103,9 @@ class KS_JAX(environment.Environment[EnvState, EnvParams]):
 
         reward = -jnp.linalg.norm(u_S - self.params.U_bf)
 
-        done = self.is_terminal(reward, params)  # TODO is this step okay idk?
+        done = self.is_terminal((state, reward), params)  # TODO is this step okay idk?
         reward_scaler = 100.0  # 30.0
-        reward = jax.lax.select(done, -reward_scaler, reward)  # / reward_scaler
-        # reward = jax.lax.select(done, -100.0, reward)
+        reward -= (reward_scaler + self.params.MAX_TOTAL_REWARD) * (reward < self.params.MAX_TOTAL_REWARD)
 
         state = EnvState(u=u_S,
                          time=state.time + 1)
@@ -122,8 +121,13 @@ class KS_JAX(environment.Environment[EnvState, EnvParams]):
     def get_obs(self, state_S: EnvState, params=None, key=None):  # TODO this in case of partial observability
         return jnp.float32(state_S.u[5::self.x_S.shape[0] // self.s_dim])
 
-    def is_terminal(self, reward: jnp.ndarray, params: EnvParams):
-        return jax.lax.select(reward < self.params.MAX_TOTAL_REWARD, True, False)
+    def is_terminal(self, joint, params: EnvParams):
+        state, reward = joint
+
+        done_r = reward < self.params.MAX_TOTAL_REWARD
+        done_steps = state.time >= 2000
+
+        return jnp.logical_or(done_steps, done_r)
 
     @property
     def name(self) -> str:
@@ -137,7 +141,7 @@ class KS_JAX(environment.Environment[EnvState, EnvParams]):
 
     def action_space(self, params: Optional[EnvParams] = None) -> spaces.Box:
         """Action space of the environment."""
-        return spaces.Box(-self.params.A_MAX, self.params.A_MAX, (self.params.A_DIM,), dtype=jnp.float64)
+        return spaces.Box(-self.params.A_MAX, self.params.A_MAX, (self.params.A_DIM,), dtype=jnp.float32)
 
     def observation_space(self, params: EnvParams) -> spaces.Box:
         """Observation space of the environment."""

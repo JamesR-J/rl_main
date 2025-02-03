@@ -22,20 +22,20 @@ class ContinuousQNetwork(nn.Module):
 
     @nn.compact
     def __call__(self, obs, actions):
-        # s1 = nn.swish(nn.Dense(256, kernel_init=nn.initializers.kaiming_uniform())(obs))
-        # s2 = nn.swish(nn.Dense(128, kernel_init=nn.initializers.kaiming_uniform())(s1))
-        # a1 = nn.swish(nn.Dense(128, kernel_init=nn.initializers.kaiming_uniform())(actions))
-        #
-        # new_x = jnp.concatenate((s2, a1), axis=-1)
-        # new_x = nn.swish(nn.Dense(128, kernel_init=nn.initializers.kaiming_uniform())(new_x))
-        # q_vals = nn.Dense(1, kernel_init=nn.initializers.uniform(0.003))(new_x)
+        s1 = nn.swish(nn.Dense(256, kernel_init=nn.initializers.kaiming_uniform())(obs))
+        s2 = nn.swish(nn.Dense(128, kernel_init=nn.initializers.kaiming_uniform())(s1))
+        a1 = nn.swish(nn.Dense(128, kernel_init=nn.initializers.kaiming_uniform())(actions))
 
-        x = jnp.concatenate((obs, actions), axis=-1)
-        x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
-        x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
-        x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
-        x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
-        q_vals = nn.Dense(1, kernel_init=orthogonal(1.0))(x)
+        new_x = jnp.concatenate((s2, a1), axis=-1)
+        new_x = nn.swish(nn.Dense(128, kernel_init=nn.initializers.kaiming_uniform())(new_x))
+        q_vals = nn.Dense(1, kernel_init=nn.initializers.uniform(0.003))(new_x)
+
+        # x = jnp.concatenate((obs, actions), axis=-1)
+        # x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        # x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        # x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        # x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        # q_vals = nn.Dense(1, kernel_init=orthogonal(1.0))(x)
 
         return q_vals
 
@@ -47,14 +47,14 @@ class DeterministicPolicy(nn.Module):
 
     @nn.compact
     def __call__(self, obs):
-        # x = nn.relu(nn.Dense(256, kernel_init=nn.initializers.kaiming_uniform())(obs))
-        # x = nn.relu(nn.Dense(128, kernel_init=nn.initializers.kaiming_uniform())(x))
-        # x = nn.relu(nn.Dense(64, kernel_init=nn.initializers.kaiming_uniform())(x))
+        x = nn.relu(nn.Dense(256, kernel_init=nn.initializers.kaiming_uniform())(obs))
+        x = nn.relu(nn.Dense(128, kernel_init=nn.initializers.kaiming_uniform())(x))
+        x = nn.relu(nn.Dense(64, kernel_init=nn.initializers.kaiming_uniform())(x))
 
-        x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(obs))
-        x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
-        x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
-        x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        # x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(obs))
+        # x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        # x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
+        # x = nn.silu(nn.Dense(256, kernel_init=orthogonal(np.sqrt(2.0)))(x))
 
         action = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01))(x)
 

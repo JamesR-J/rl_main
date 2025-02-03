@@ -25,8 +25,8 @@ def get_config():
 
     config.DEEP_SEA_MAP = 20
 
-    # config.WANDB = "disabled"
-    config.WANDB = "online"
+    config.WANDB = "disabled"
+    # config.WANDB = "online"
 
     config.DISABLE_JIT = False
     # config.DISABLE_JIT = True
@@ -35,8 +35,8 @@ def get_config():
 
     # config.AGENT_TYPE = "DDPG"
     # config.AGENT_TYPE = "PPO"
-    config.AGENT_TYPE = "SAC"
-    # config.AGENT_TYPE = "ERSAC"
+    # config.AGENT_TYPE = "SAC"
+    config.AGENT_TYPE = "ERSAC"
     # config.AGENT_TYPE = "BootDQN"
     # config.AGENT_TYPE = "DQN"
 

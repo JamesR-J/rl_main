@@ -3,6 +3,9 @@ from ml_collections import config_dict
 
 def get_PPO_config():
     config = config_dict.ConfigDict()
+
+    config.NUM_INNER_STEPS = 64
+
     config.LR = 0.005
     config.GAMMA = 0.96
     config.EPS = 1
