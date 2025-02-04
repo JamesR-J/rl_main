@@ -15,7 +15,7 @@ def get_config():
     # config.NUM_INNER_STEPS = 1  # 200#0  # ep rollout length
     # config.NUM_EPISODES = 200000  # 2000  # 5000  # 50000  # number of ep rollouts to run
 
-    config.TOTAL_TIMESTEPS = 250#00000
+    config.TOTAL_TIMESTEPS = 2300000#0
     # TODO add in the above and then each agent has a num_inner_steps to figure out num_episodes, this needs to be
     # apparent in the agent itself as well as the overall training loop outside
     # perhaps by
@@ -25,8 +25,8 @@ def get_config():
 
     config.DEEP_SEA_MAP = 20
 
-    config.WANDB = "disabled"
-    # config.WANDB = "online"
+    # config.WANDB = "disabled"
+    config.WANDB = "online"
 
     config.DISABLE_JIT = False
     # config.DISABLE_JIT = True

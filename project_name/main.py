@@ -5,6 +5,8 @@ from project_name.config import get_config  # TODO dodge need to know how to fix
 import jax
 from jax.lib import xla_bridge
 import jax.profiler
+import orbax
+from flax.training import orbax_utils
 
 
 jax.config.update("jax_enable_x64", True)  # TODO unsure if need or not but will check results
@@ -43,8 +45,11 @@ def main(_):
         out = jax.block_until_ready(train())  # .block_until_ready()
         # jax.profiler.save_device_memory_profile("memory.prof")
         train_state = out["runner_state"][0][0]
-        critic_params = train_state.critic_state.params
-        jax.numpy.save("project_name/ersac_critic_params.npy", critic_params)
+        # critic_params = train_state.critic_state.params
+        ckpt = {'model': train_state}
+        orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
+        save_args = orbax_utils.save_args_from_target(ckpt)
+        orbax_checkpointer.save('/home/james/PycharmProjects/rl_main/project_name/Orbax_Checkpoints/eyyooo', ckpt, save_args=save_args)
 
 
     print("FINITO")
